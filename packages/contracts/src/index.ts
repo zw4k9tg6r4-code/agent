@@ -50,3 +50,28 @@ export {
   type PermissionOutcome,
   type PermissionRequest,
 } from "./permission.js";
+export {
+  isTerminalSessionState,
+  SESSION_STATES,
+  type SessionEvent,
+  type SessionEventBase,
+  type SessionEventData,
+  type SessionEventSink,
+  type SessionEventStore,
+  type SessionListItem,
+  type SessionState,
+  type TerminalSessionState,
+} from "./session.js";
+export type {
+  AgentContinueTurnOptions,
+  AgentDependencies,
+  AgentFinishOptions,
+  AgentNewTurnOptions,
+  AgentResumeTurnOptions,
+  AgentRunner,
+  AgentRunError,
+  AgentRunLimits,
+  AgentRunResult,
+  AgentTurnOptions,
+  AgentTurnResult,
+} from "./agent.js";
