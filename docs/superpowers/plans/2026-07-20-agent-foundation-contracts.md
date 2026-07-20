@@ -1070,6 +1070,7 @@ export type SessionEventData =
       readonly step: number;
       readonly message: AssistantModelMessage;
       readonly stopReason: ModelStopReason;
+      readonly usage: TokenUsage;
     }
   | {
       readonly type: "tool_requested";
