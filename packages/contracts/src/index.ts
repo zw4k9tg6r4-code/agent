@@ -37,3 +37,16 @@ export {
   type ToolResultBase,
   type ToolSuccess,
 } from "./tool.js";
+export {
+  isPermissionMode,
+  PERMISSION_MODES,
+  type PermissionConfirmer,
+  type PermissionDecision,
+  type PermissionDecisionBase,
+  type PermissionDenyDecision,
+  type PermissionEvaluator,
+  type PermissionExecutableDecision,
+  type PermissionMode,
+  type PermissionOutcome,
+  type PermissionRequest,
+} from "./permission.js";
