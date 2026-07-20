@@ -36,7 +36,7 @@
 | `packages/contracts/tsconfig.json` | Source and test type-checking. |
 | `packages/contracts/tsconfig.build.json` | Declaration and JavaScript build output. |
 | `packages/contracts/src/json.ts` | JSON-safe values and schemas. |
-| `packages/contracts/src/tool.ts` | Tool definitions, calls, results, and execution interface. |
+| `packages/contracts/src/tool.ts` | Tool definitions, calls, results, checkpoints, and execution interface. |
 | `packages/contracts/src/model.ts` | Model messages, streaming events, usage, and provider interface. |
 | `packages/contracts/src/permission.ts` | Permission modes, decisions, requests, and evaluator interface. |
 | `packages/contracts/src/session.ts` | Append-only session event contracts. |
@@ -333,7 +333,7 @@ git commit -m "build: bootstrap agent workspace"
 **Interfaces:**
 
 - Produces: `JsonValue`, `JsonObject`, `JsonSchema`.
-- Produces: `ToolDefinition`, `ToolCall`, discriminated `ToolResult`, `Tool`, `ToolExecutionContext`.
+- Produces: `ToolDefinition`, `ToolCall`, discriminated `ToolResult`, checkpoint contracts, `Tool`, `ToolExecutionContext`.
 - Produces: `ModelMessage`, `ModelRequest`, `ModelEvent`, `ModelProvider`, `TokenUsage`.
 - Produces: `isTerminalModelEvent(event: ModelEvent): boolean`.
 - Consumes: only standard platform types.
@@ -347,9 +347,11 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   isTerminalModelEvent,
+  type CheckpointRestoreResult,
   type JsonObject,
   type ModelEvent,
   type ModelProvider,
+  type CheckpointStore,
   type Tool,
   type ToolCall,
   type ToolResult,
@@ -402,8 +404,12 @@ describe("model and tool contracts", () => {
     expectTypeOf<ModelProvider["stream"]>().returns.toMatchTypeOf<
       AsyncIterable<ModelEvent>
     >();
+    expectTypeOf<Parameters<Tool["execute"]>[0]>().toEqualTypeOf<ToolCall>();
     expectTypeOf<Tool["execute"]>().returns.toMatchTypeOf<
       Promise<ToolResult>
+    >();
+    expectTypeOf<CheckpointStore["restore"]>().returns.toMatchTypeOf<
+      Promise<CheckpointRestoreResult>
     >();
   });
 });
@@ -491,16 +497,40 @@ export interface ToolFailure extends ToolResultBase {
 
 export type ToolResult = ToolFailure | ToolSuccess;
 
+export interface CheckpointCaptureRequest {
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+  readonly relativePath: string;
+  readonly signal: AbortSignal;
+}
+
+export interface CheckpointRestoreRequest {
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+  readonly signal: AbortSignal;
+}
+
+export interface CheckpointRestoreResult {
+  readonly restoredPaths: readonly string[];
+  readonly removedPaths: readonly string[];
+}
+
+export interface CheckpointStore {
+  capture(request: CheckpointCaptureRequest): Promise<void>;
+  restore(request: CheckpointRestoreRequest): Promise<CheckpointRestoreResult>;
+}
+
 export interface ToolExecutionContext {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly signal: AbortSignal;
+  readonly checkpoints: CheckpointStore;
 }
 
 export interface Tool {
   readonly definition: ToolDefinition;
   execute(
-    input: JsonObject,
+    call: ToolCall,
     context: ToolExecutionContext,
   ): Promise<ToolResult>;
 }
@@ -626,6 +656,10 @@ export {
 } from "./model.js";
 export {
   RISK_LEVELS,
+  type CheckpointCaptureRequest,
+  type CheckpointRestoreRequest,
+  type CheckpointRestoreResult,
+  type CheckpointStore,
   type RiskLevel,
   type Tool,
   type ToolCall,
@@ -674,7 +708,7 @@ git commit -m "feat: define model and tool contracts"
 
 **Interfaces:**
 
-- Produces: `PermissionMode`, `PermissionOutcome`, `PermissionRequest`, `PermissionDecision`.
+- Produces: `PermissionMode`, `PermissionOutcome`, `PermissionRequest`, discriminated `PermissionDecision`.
 - Produces: `PermissionEvaluator.evaluate(request): Promise<PermissionDecision>`.
 - Produces: `PermissionConfirmer.confirm(request, decision, signal): Promise<boolean>`.
 - Produces: `isPermissionMode(value: string): value is PermissionMode`.
@@ -717,6 +751,21 @@ describe("permission contracts", () => {
       Promise<boolean>
     >();
   });
+
+  it("requires resolved arguments for executable decisions", () => {
+    const decision: PermissionDecision = {
+      outcome: "allow",
+      reason: "path is inside the workspace",
+      ruleId: "workspace.path.inside",
+      resolvedArguments: {
+        path: "C:/workspace/README.md",
+      },
+    };
+
+    expect(decision.resolvedArguments["path"]).toBe(
+      "C:/workspace/README.md",
+    );
+  });
 });
 ```
 
@@ -736,7 +785,7 @@ Create `packages/contracts/src/permission.ts`:
 
 ```ts
 import type { JsonObject } from "./json.js";
-import type { ToolDefinition } from "./tool.js";
+import type { ToolCall, ToolDefinition } from "./tool.js";
 
 export const PERMISSION_MODES = [
   "readonly",
@@ -751,15 +800,27 @@ export type PermissionOutcome = "allow" | "ask" | "deny";
 export interface PermissionRequest {
   readonly mode: PermissionMode;
   readonly tool: ToolDefinition;
-  readonly input: JsonObject;
+  readonly call: ToolCall;
   readonly workspaceRoot: string;
 }
 
-export interface PermissionDecision {
-  readonly outcome: PermissionOutcome;
+export interface PermissionDecisionBase {
   readonly reason: string;
   readonly ruleId: string;
 }
+
+export interface PermissionExecutableDecision extends PermissionDecisionBase {
+  readonly outcome: "allow" | "ask";
+  readonly resolvedArguments: JsonObject;
+}
+
+export interface PermissionDenyDecision extends PermissionDecisionBase {
+  readonly outcome: "deny";
+}
+
+export type PermissionDecision =
+  | PermissionDenyDecision
+  | PermissionExecutableDecision;
 
 export interface PermissionEvaluator {
   evaluate(request: PermissionRequest): Promise<PermissionDecision>;
@@ -788,7 +849,10 @@ export {
   PERMISSION_MODES,
   type PermissionConfirmer,
   type PermissionDecision,
+  type PermissionDecisionBase,
+  type PermissionDenyDecision,
   type PermissionEvaluator,
+  type PermissionExecutableDecision,
   type PermissionMode,
   type PermissionOutcome,
   type PermissionRequest,
@@ -808,7 +872,7 @@ npm.cmd run build
 Expected:
 
 - All commands exit `0`.
-- Three permission tests pass.
+- Four permission tests pass.
 
 - [ ] **Step 6: Commit permission contracts**
 
@@ -830,9 +894,11 @@ git commit -m "feat: define permission contracts"
 
 **Interfaces:**
 
-- Produces: append-only `SessionEvent` discriminated union.
-- Produces: `SessionEventSink` and resumable `SessionEventStore`.
-- Produces: `AgentRunOptions`, `AgentRunLimits`, `AgentRunResult`, `AgentDependencies`.
+- Produces: append-only `SessionEventData` and persisted `SessionEvent`.
+- Produces: atomic `SessionEventSink` and resumable `SessionEventStore`.
+- Produces: new, continued, and resumed `AgentTurnOptions`.
+- Produces: `AgentRunner.runTurn(...)` and `AgentRunner.finishSession(...)`.
+- Produces: `AgentTurnResult`, terminal `AgentRunResult`, and `AgentDependencies`.
 - Produces: `TerminalSessionState` and its narrowing guard.
 - Consumes: model, tool, and permission contracts from Tasks 2 and 3.
 
@@ -846,8 +912,12 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   isTerminalSessionState,
   type AgentDependencies,
+  type AgentRunner,
   type AgentRunResult,
+  type AgentTurnOptions,
+  type AgentTurnResult,
   type SessionEvent,
+  type SessionEventData,
   type SessionEventSink,
   type SessionEventStore,
   type SessionListItem,
@@ -863,13 +933,16 @@ describe("session and Agent contracts", () => {
   });
 
   it("uses discriminated append-only events", () => {
-    const event: SessionEvent = {
+    const data: SessionEventData = {
       type: "session_cancelled",
+      reason: "user_cancelled",
+    };
+    const event: SessionEvent = {
+      ...data,
       eventId: "event-3",
       sessionId: "session-1",
       sequence: 3,
       at: "2026-07-20T08:00:00.000Z",
-      reason: "user_cancelled",
     };
 
     expect(event.type).toBe("session_cancelled");
@@ -878,14 +951,39 @@ describe("session and Agent contracts", () => {
 
   it("defines asynchronous dependencies and final results", () => {
     expectTypeOf<SessionEventSink["append"]>().returns.toEqualTypeOf<
-      Promise<void>
+      Promise<SessionEvent>
     >();
     expectTypeOf<SessionEventStore["list"]>().returns.toEqualTypeOf<
       Promise<readonly SessionListItem[]>
     >();
-    expectTypeOf<AgentDependencies["events"]>().toMatchTypeOf<SessionEventSink>();
+    expectTypeOf<AgentDependencies["sessions"]>().toMatchTypeOf<
+      SessionEventStore
+    >();
+    expectTypeOf<AgentRunner["runTurn"]>().returns.toEqualTypeOf<
+      Promise<AgentTurnResult>
+    >();
     expectTypeOf<AgentRunResult["steps"]>().toEqualTypeOf<number>();
     expectTypeOf<AgentRunResult["status"]>().toEqualTypeOf<TerminalSessionState>();
+  });
+
+  it("separates a continued turn from session finalization", () => {
+    const options: AgentTurnOptions = {
+      kind: "continue",
+      sessionId: "session-1",
+      message: "continue",
+      limits: {
+        maxSteps: 30,
+        maxContextTokens: 64_000,
+        maxOutputTokens: 8_000,
+        timeoutMs: 300_000,
+      },
+      signal: new AbortController().signal,
+    };
+
+    expect(options.kind).toBe("continue");
+    expectTypeOf<AgentRunner["finishSession"]>().returns.toEqualTypeOf<
+      Promise<AgentRunResult>
+    >();
   });
 });
 ```
@@ -906,7 +1004,11 @@ Create `packages/contracts/src/session.ts`:
 
 ```ts
 import type { PermissionDecision, PermissionMode } from "./permission.js";
-import type { TokenUsage } from "./model.js";
+import type {
+  AssistantModelMessage,
+  ModelStopReason,
+  TokenUsage,
+} from "./model.js";
 import type {
   ToolCall,
   ToolFailure,
@@ -931,69 +1033,120 @@ export interface SessionEventBase {
   readonly at: string;
 }
 
-export type SessionEvent =
-  | (SessionEventBase & {
+export type SessionEventData =
+  | {
       readonly type: "session_started";
       readonly task: string;
       readonly workspaceRoot: string;
       readonly permissionMode: PermissionMode;
-    })
-  | (SessionEventBase & {
+    }
+  | {
+      readonly type: "turn_started";
+      readonly turnId: string;
+      readonly kind: "continue" | "new" | "resume";
+    }
+  | {
       readonly type: "user_message";
+      readonly turnId: string;
       readonly content: string;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "model_request_started";
+      readonly turnId: string;
       readonly step: number;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "model_output";
+      readonly turnId: string;
+      readonly step: number;
       readonly text: string;
-    })
-  | (SessionEventBase & {
+    }
+  | {
+      readonly type: "model_response_completed";
+      readonly turnId: string;
+      readonly step: number;
+      readonly message: AssistantModelMessage;
+      readonly stopReason: ModelStopReason;
+    }
+  | {
       readonly type: "tool_requested";
+      readonly turnId: string;
+      readonly step: number;
       readonly call: ToolCall;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "permission_decided";
+      readonly turnId: string;
+      readonly step: number;
       readonly toolCallId: string;
       readonly decision: PermissionDecision;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "permission_confirmed";
+      readonly turnId: string;
+      readonly step: number;
       readonly toolCallId: string;
       readonly approved: boolean;
-    })
-  | (SessionEventBase & {
+    }
+  | {
+      readonly type: "tool_execution_started";
+      readonly turnId: string;
+      readonly step: number;
+      readonly toolCallId: string;
+    }
+  | {
       readonly type: "tool_completed";
+      readonly turnId: string;
+      readonly step: number;
       readonly result: ToolSuccess;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "tool_failed";
+      readonly turnId: string;
+      readonly step: number;
       readonly result: ToolFailure;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "context_compacted";
+      readonly turnId: string;
       readonly beforeTokens: number;
       readonly afterTokens: number;
-    })
-  | (SessionEventBase & {
+    }
+  | {
+      readonly type: "turn_completed";
+      readonly turnId: string;
+      readonly output: string;
+      readonly steps: number;
+      readonly usage: TokenUsage;
+    }
+  | {
+      readonly type: "turn_failed";
+      readonly turnId: string;
+      readonly code: string;
+      readonly message: string;
+    }
+  | {
       readonly type: "session_completed";
       readonly summary: string;
       readonly usage: TokenUsage;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "session_failed";
       readonly code: string;
       readonly message: string;
-    })
-  | (SessionEventBase & {
+    }
+  | {
       readonly type: "session_cancelled";
       readonly reason: string;
-    });
+    };
+
+export type SessionEvent = SessionEventBase & SessionEventData;
 
 export interface SessionEventSink {
-  append(event: SessionEvent): Promise<void>;
+  append(
+    sessionId: string,
+    event: SessionEventData,
+  ): Promise<SessionEvent>;
 }
 
 export interface SessionListItem {
@@ -1001,9 +1154,12 @@ export interface SessionListItem {
   readonly state: SessionState;
   readonly task: string;
   readonly updatedAt: string;
+  readonly lastSequence: number;
+  readonly usage: TokenUsage;
 }
 
 export interface SessionEventStore extends SessionEventSink {
+  get(sessionId: string): Promise<SessionListItem | undefined>;
   read(sessionId: string): AsyncIterable<SessionEvent>;
   list(): Promise<readonly SessionListItem[]>;
 }
@@ -1027,18 +1183,21 @@ import type {
   PermissionMode,
 } from "./permission.js";
 import type {
-  SessionEventSink,
+  SessionEventStore,
+  SessionState,
   TerminalSessionState,
 } from "./session.js";
-import type { Tool } from "./tool.js";
+import type { CheckpointStore, Tool } from "./tool.js";
 
 export interface AgentRunLimits {
   readonly maxSteps: number;
+  readonly maxContextTokens: number;
   readonly maxOutputTokens: number;
   readonly timeoutMs: number;
 }
 
-export interface AgentRunOptions {
+export interface AgentNewTurnOptions {
+  readonly kind: "new";
   readonly task: string;
   readonly workspaceRoot: string;
   readonly permissionMode: PermissionMode;
@@ -1047,18 +1206,54 @@ export interface AgentRunOptions {
   readonly sessionId?: string;
 }
 
+export interface AgentContinueTurnOptions {
+  readonly kind: "continue";
+  readonly sessionId: string;
+  readonly message: string;
+  readonly limits: AgentRunLimits;
+  readonly signal: AbortSignal;
+}
+
+export interface AgentResumeTurnOptions {
+  readonly kind: "resume";
+  readonly sessionId: string;
+  readonly limits: AgentRunLimits;
+  readonly signal: AbortSignal;
+}
+
+export type AgentTurnOptions =
+  | AgentContinueTurnOptions
+  | AgentNewTurnOptions
+  | AgentResumeTurnOptions;
+
+export interface AgentFinishOptions {
+  readonly sessionId: string;
+  readonly signal: AbortSignal;
+}
+
 export interface AgentDependencies {
   readonly provider: ModelProvider;
   readonly tools: readonly Tool[];
   readonly permissions: PermissionEvaluator;
   readonly confirmations: PermissionConfirmer;
-  readonly events: SessionEventSink;
+  readonly sessions: SessionEventStore;
+  readonly checkpoints: CheckpointStore;
 }
 
 export interface AgentRunError {
   readonly code: string;
   readonly message: string;
   readonly retryable: boolean;
+}
+
+export interface AgentTurnResult {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly status: SessionState;
+  readonly output: string;
+  readonly steps: number;
+  readonly usage: TokenUsage;
+  readonly error?: AgentRunError;
 }
 
 export interface AgentRunResult {
@@ -1068,6 +1263,11 @@ export interface AgentRunResult {
   readonly steps: number;
   readonly usage: TokenUsage;
   readonly error?: AgentRunError;
+}
+
+export interface AgentRunner {
+  runTurn(options: AgentTurnOptions): Promise<AgentTurnResult>;
+  finishSession(options: AgentFinishOptions): Promise<AgentRunResult>;
 }
 ```
 
@@ -1081,6 +1281,7 @@ export {
   SESSION_STATES,
   type SessionEvent,
   type SessionEventBase,
+  type SessionEventData,
   type SessionEventSink,
   type SessionEventStore,
   type SessionListItem,
@@ -1088,11 +1289,17 @@ export {
   type TerminalSessionState,
 } from "./session.js";
 export type {
+  AgentContinueTurnOptions,
   AgentDependencies,
+  AgentFinishOptions,
+  AgentNewTurnOptions,
+  AgentResumeTurnOptions,
+  AgentRunner,
   AgentRunError,
   AgentRunLimits,
-  AgentRunOptions,
   AgentRunResult,
+  AgentTurnOptions,
+  AgentTurnResult,
 } from "./agent.js";
 ```
 
@@ -1109,7 +1316,7 @@ npm.cmd run build
 Expected:
 
 - All commands exit `0`.
-- Three session/Agent tests pass.
+- Four session/Agent tests pass.
 - The generated package declaration file exports all public contracts.
 
 - [ ] **Step 7: Commit session and Agent contracts**
@@ -1140,12 +1347,13 @@ Create `docs/architecture/contracts.md`:
 ```markdown
 # Agent Runtime Contracts
 
-`@agent/contracts` is the only shared dependency between parallel MVP packages.
+`@agent/contracts` is the only interface package shared by every parallel MVP worktree.
 
 ## Dependency rule
 
 - `core`, `providers`, `tools`, `policy`, and `cli` may import from `@agent/contracts`.
 - Implementation packages must not import another package's internal `src/` files.
+- The final composition root may import public package entry points after the implementation branches are integrated.
 - Public data crossing package boundaries must be JSON-safe unless the contract explicitly uses a platform object such as `AbortSignal`.
 
 ## Compatibility rule
@@ -1160,11 +1368,15 @@ The main task decides whether to update the baseline and rebase the workers.
 
 ## Event rule
 
-Session records are append-only. Existing events are never edited in place. A resumed session starts after the last complete event and never replays a write whose completion state is unknown.
+Session records are append-only. `SessionEventStore.append` atomically assigns event ID, sequence, and timestamp. Existing events are never edited in place. A resumed turn only trusts complete `model_response_completed` events. A `tool_execution_started` event without a matching success or failure has unknown execution state and is never replayed automatically.
+
+## Runtime rule
+
+`AgentRunner.runTurn` supports new, continued, and resumed turns. A successful turn leaves the session in `running` state so interactive input can continue. `AgentRunner.finishSession` is the only normal path that writes `session_completed`; no event may be appended after a terminal session event.
 
 ## Security rule
 
-`PermissionEvaluator` decides before a tool executes. Tools do not bypass permission decisions, and Core does not call the filesystem or shell directly.
+`PermissionEvaluator` decides before a tool executes. Core passes only the decision's `resolvedArguments` into `Tool.execute`, preserving the model's original `ToolCall.id`. Tools do not bypass permission decisions, and Core does not call the filesystem or shell directly. `file_patch` captures the first preimage through `CheckpointStore` before writing.
 
 ## Version rule
 

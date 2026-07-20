@@ -120,6 +120,7 @@ agent
 agent run "<任务>"
 agent sessions
 agent resume <session-id>
+agent undo <session-id>
 ```
 
 命令行为：
@@ -129,6 +130,7 @@ agent resume <session-id>
 - `agent run`：执行一次任务，完成后以明确退出码结束。
 - `agent sessions`：列出本地会话的状态、时间和消耗。
 - `agent resume`：从可恢复会话继续执行。
+- `agent undo`：依据会话首次修改前的检查点撤销该会话的文件变更。
 
 ## MVP 范围
 
@@ -142,6 +144,7 @@ agent resume <session-id>
 - 项目级 `AGENTS.md` 加载。
 - 项目级 Skills 加载。
 - 本地会话事件日志。
+- 会话与 Turn 分离：交互模式可以在同一会话内完成多个用户 Turn。
 - 文件修改前镜像和按会话撤销能力。
 - 超时、步骤数和 Token 预算限制。
 - 集成测试、安全测试和 20 个任务的评测集。
@@ -194,6 +197,7 @@ agent resume <session-id>
 
 - 接收和标准化用户任务。
 - 维护 Agent 状态机。
+- 区分会话生命周期和单次 Turn；只有显式结束会话才写入正常终态。
 - 请求模型并消费流式响应。
 - 调度工具调用。
 - 把工具结果反馈给模型。
@@ -289,9 +293,9 @@ CLI 不包含 Agent 决策逻辑。未来的 TUI、Web UI 或编辑器扩展应�
 6. Tool Registry 校验工具是否存在以及参数是否符合结构。
 7. Permission Engine 返回 `allow`、`ask` 或 `deny`。
 8. 获准的工具由 Tool Executor 执行。
-9. 执行结果经过长度限制和敏感信息清理后写入会话日志。
+9. 工具执行前写入开始事件；执行结果经过长度限制和敏感信息清理后写入会话日志。
 10. 工具结果反馈给模型，Agent 循环继续。
-11. 任务完成、失败、取消或达到预算后，写入终态事件并返回退出码。
+11. 单次 Turn 完成后写入 `turn_completed`；一次性运行结束或用户退出交互会话时才写入会话终态并返回退出码。
 
 ## 本地数据
 
@@ -311,14 +315,20 @@ CLI 不包含 Agent 决策逻辑。未来的 TUI、Web UI 或编辑器扩展应�
 会话日志采用追加写入，不在原记录上改写。核心事件包括：
 
 - `session_started`
+- `turn_started`
 - `user_message`
 - `model_request_started`
 - `model_output`
+- `model_response_completed`
 - `tool_requested`
 - `permission_decided`
+- `permission_confirmed`
+- `tool_execution_started`
 - `tool_completed`
 - `tool_failed`
 - `context_compacted`
+- `turn_completed`
+- `turn_failed`
 - `session_completed`
 - `session_failed`
 - `session_cancelled`
@@ -370,7 +380,7 @@ CLI 不包含 Agent 决策逻辑。未来的 TUI、Web UI 或编辑器扩展应�
 - 工具输出超过上限时保留开头、结尾和截断说明。
 - 上下文接近上限时执行压缩，并记录 `context_compacted` 事件。
 - 用户取消后停止新的工具调用，保留已完成事件和文件检查点。
-- 进程中断后，只能从最后一个完整事件恢复，不重放状态不明的写操作。
+- 进程中断后，只能从最后一个完整模型响应恢复；存在“工具已开始但没有成功/失败事件”时标记为未知执行状态，不自动重放该写操作。
 
 # 执行计划
 
@@ -482,6 +492,7 @@ agent/
 - 配置初始化。
 - 权限交互。
 - 会话查看与恢复入口。
+- 按会话撤销入口。
 - 对应 CLI 测试。
 
 禁止三个工作树同时修改：
