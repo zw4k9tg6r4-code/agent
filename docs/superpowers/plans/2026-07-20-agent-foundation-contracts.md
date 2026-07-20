@@ -236,7 +236,10 @@ Create `packages/contracts/tsconfig.build.json`:
     "rootDir": "src",
     "outDir": "dist",
     "incremental": true,
-    "tsBuildInfoFile": "dist/.tsbuildinfo"
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/**/*.ts"
