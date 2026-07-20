@@ -1378,9 +1378,13 @@ Session records are append-only. `SessionEventStore.append` atomically assigns e
 
 `AgentRunner.runTurn` supports new, continued, and resumed turns. A successful turn leaves the session in `running` state so interactive input can continue. `AgentRunner.finishSession` is the only normal path that writes `session_completed`; no event may be appended after a terminal session event.
 
+An external abort interrupts only the active Turn. Core returns a running result with `turn_cancelled` and leaves that Turn incomplete, without appending `turn_failed` or `session_cancelled`, so recovery can apply the same unknown-execution checks as a process crash. `session_cancelled` is reserved for explicit whole-session termination outside the MVP.
+
 ## Security rule
 
 `PermissionEvaluator` decides before a tool executes. Core passes only the decision's `resolvedArguments` into `Tool.execute`, preserving the model's original `ToolCall.id`. Tools do not bypass permission decisions, and Core does not call the filesystem or shell directly. `file_patch` captures the first preimage through `CheckpointStore` before writing.
+
+The MVP `shell_execute` tool accepts a structured direct-process request (`program`, `args`, optional `cwd` and `timeoutMs`). It does not interpret an opaque Shell command, pipe, redirection, compound expression, or script-shell wrapper.
 
 ## Version rule
 
