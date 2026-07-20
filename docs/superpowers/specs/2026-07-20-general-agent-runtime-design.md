@@ -449,7 +449,9 @@ agent/
 
 ## 多工作树边界
 
-主任务先在基线提交中创建根配置、Contracts 和测试契约。Contracts 冻结后，创建三个用户可见的独立工作树任务：
+主任务先在基线提交中创建根配置、Contracts 和测试契约。Contracts 冻结后分两波创建用户可见的独立工作树任务。
+
+第一波并行执行 Core/Providers 与 Tools/Policy；主任务合并并验证这两条分支后，第二波再从更新后的 `main` 创建 CLI 工作树。CLI 因为需要组合前四个公共包，不与其依赖同时开发。
 
 ### `codex/agent-core`
 
@@ -495,7 +497,7 @@ agent/
 - 按会话撤销入口。
 - 对应 CLI 测试。
 
-禁止三个工作树同时修改：
+禁止任何工作树修改：
 
 - 根目录 `package.json`
 - 根目录 TypeScript 和测试配置

@@ -1457,4 +1457,4 @@ After this gate, write and commit three separate plans:
 - `docs/superpowers/plans/2026-07-20-agent-tools-policy.md`
 - `docs/superpowers/plans/2026-07-20-agent-cli.md`
 
-Then create the three independent worktree tasks defined in the approved design.
+Then create the Core/Providers and Tools/Policy worktree tasks in parallel. Merge and verify both branches before creating the CLI worktree from the updated `main`, because CLI owns the final composition root and depends on all four public implementation packages.
