@@ -15,3 +15,9 @@ export {
   type PendingToolState,
   type SessionSnapshot,
 } from "./history.js";
+
+export {
+  dispatchToolCall,
+  ToolDispatchError,
+  type DispatchToolInput,
+} from "./tool-dispatcher.js";
