@@ -20,6 +20,6 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run test --config vitest.config.ts"
+    "test": "vitest run"
   }
 }
