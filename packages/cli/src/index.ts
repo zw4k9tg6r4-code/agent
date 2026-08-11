@@ -53,3 +53,9 @@ export {
   reportRestore,
   reportTurn,
 } from "./format.js";
+export {
+  CLI_VERSION,
+  executeCli,
+  main,
+  type ExecuteCliContext,
+} from "./bin.js";
