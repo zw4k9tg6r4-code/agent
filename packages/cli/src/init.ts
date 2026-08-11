@@ -40,8 +40,8 @@ export async function initializeWorkspace(
 ): Promise<InitializeResult> {
   const root = join(workspaceRoot, ".agent");
   const configPath = join(root, "config.json");
-  await mkdir(join(root, "sessions"), { recursive: true });
-  await mkdir(join(root, "checkpoints"), { recursive: true });
+  await mkdir(join(root, "sessions"), { recursive: true, mode: 0o700 });
+  await mkdir(join(root, "checkpoints"), { recursive: true, mode: 0o700 });
 
   let configCreated = false;
   try {

@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -405,4 +405,25 @@ describe("JsonlSessionEventStore", () => {
       ),
     );
   });
+
+  it("rejects operations if the session root is a symbolic link or escapes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-cli-escape-"));
+    roots.push(root);
+    const outside = await mkdtemp(join(tmpdir(), "agent-cli-outside-"));
+    roots.push(outside);
+    const workspaceRoot = join(root, "workspace");
+    await mkdir(workspaceRoot);
+    const agentDir = join(workspaceRoot, ".agent");
+    await mkdir(agentDir);
+    await symlink(outside, join(agentDir, "sessions"), process.platform === "win32" ? "junction" : "dir");
+    
+    const store = new JsonlSessionEventStore(join(agentDir, "sessions"));
+    await expect(store.append("session-1", {
+      type: "session_started",
+      task: "inspect",
+      workspaceRoot,
+      permissionMode: "workspace",
+    })).rejects.toThrow(/must not be a symbolic link|must not be a reparse point/);
+  });
 });
+

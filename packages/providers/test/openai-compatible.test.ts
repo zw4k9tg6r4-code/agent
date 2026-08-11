@@ -462,4 +462,55 @@ describe("OpenAICompatibleProvider", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("enforces tool call limits and argument size limits", async () => {
+    const fetchCallsLimit = vi.fn<typeof fetch>(async () => {
+      const calls = [];
+      for (let i = 0; i < 130; i++) {
+        calls.push(`{"index":${i},"id":"call-${i}","type":"function","function":{"name":"file_read","arguments":"{}"}}`);
+      }
+      return sse([`data: {"choices":[{"delta":{"tool_calls":[${calls.join(",")}]},"finish_reason":null}]}\n\n`]);
+    });
+    await expect(
+      collect(
+        provider(fetchCallsLimit).stream(request, {
+          signal: new AbortController().signal,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "too_many_tool_calls",
+      retryable: false,
+    });
+
+    const fetchArgsLimit = vi.fn<typeof fetch>(async () => {
+      const args = "A".repeat(5_000_001);
+      return sse([
+        `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"file_read","arguments":"${args}"}}]},"finish_reason":null}]}\n\n`,
+      ]);
+    });
+    await expect(
+      collect(
+        provider(fetchArgsLimit).stream(request, {
+          signal: new AbortController().signal,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "arguments_too_large",
+      retryable: false,
+    });
+  });
+
+  it("enforces SSE buffer size limits", async () => {
+    const fetchSseLimit = vi.fn<typeof fetch>(async () => {
+      return sse([`data: ${"A".repeat(10_000_001)}\n\n`]);
+    });
+    await expect(
+      collect(
+        provider(fetchSseLimit).stream(request, {
+          signal: new AbortController().signal,
+        }),
+      ),
+    ).rejects.toThrow("SSE frame exceeded maximum buffer size");
+  });
 });
+

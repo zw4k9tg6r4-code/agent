@@ -181,4 +181,3 @@ describe("compactModelMessages", () => {
     expect(result.afterTokens).toBeLessThanOrEqual(50);
   });
 });
-

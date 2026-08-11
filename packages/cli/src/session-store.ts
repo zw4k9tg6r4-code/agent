@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
+  lstat,
   mkdir,
   open,
   readdir,
   readFile,
+  realpath,
   stat,
   unlink,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   isPermissionMode,
@@ -829,7 +831,7 @@ export class JsonlSessionEventStore implements SessionEventStore {
       at: this.#now().toISOString(),
     };
     validateHistory(sessionId, [...state.events, event]);
-    const append = await open(path, "a");
+    const append = await open(path, "a", 0o600);
     try {
       const separator =
         state.repairOffset === null && state.needsSeparator ? "\n" : "";
@@ -962,13 +964,36 @@ export class JsonlSessionEventStore implements SessionEventStore {
     return { events, needsSeparator, repairOffset };
   }
 
+  async #ensureSafeRoot(): Promise<void> {
+    const workspaceRoot = dirname(dirname(this.#root));
+    const agentDir = join(workspaceRoot, ".agent");
+    for (const dir of [agentDir, this.#root]) {
+      try {
+        const stats = await lstat(dir);
+        if (stats.isSymbolicLink()) {
+          throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `session directory ${dir} must not be a symbolic link`);
+        }
+        const real = await realpath(dir);
+        if (real !== dir) {
+          throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `session directory ${dir} must not be a reparse point or symlink`);
+        }
+      } catch (error: any) {
+        if (error.code === "ENOENT") {
+          await mkdir(dir, { mode: 0o700 });
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   async #withFileLock<T>(
     sessionId: string,
     path: string,
     wait: boolean,
     action: () => Promise<T>,
   ): Promise<T> {
-    await mkdir(this.#root, { recursive: true });
+    await this.#ensureSafeRoot();
     const lock = await this.#acquireLock(sessionId, path, wait);
     try {
       return await action();
@@ -986,7 +1011,7 @@ export class JsonlSessionEventStore implements SessionEventStore {
     while (true) {
       const lock: LockRecord = { pid: process.pid, token: randomUUID() };
       try {
-        const handle = await open(path, "wx");
+        const handle = await open(path, "wx", 0o600);
         try {
           await handle.writeFile(`${JSON.stringify(lock)}\n`, "utf8");
           await handle.sync();

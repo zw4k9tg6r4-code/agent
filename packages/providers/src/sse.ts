@@ -37,6 +37,9 @@ export async function* decodeSseData(
         break;
       }
       buffer += decoder.decode(result.value, { stream: true });
+      if (buffer.length > 10_000_000) {
+        throw new Error("SSE frame exceeded maximum buffer size");
+      }
       let boundary = eventBoundary(buffer);
       while (boundary !== undefined) {
         const rawEvent = buffer.slice(0, boundary.index);

@@ -293,6 +293,9 @@ function collectToolFragments(
     }
     const index = fragment["index"];
     const existing = calls.get(index) ?? { id: "", name: "", arguments: "" };
+    if (calls.size >= 128 && !calls.has(index)) {
+      throw new OpenAICompatibleError("too_many_tool_calls", "Exceeded maximum allowed tool calls.", false);
+    }
     if (typeof fragment["id"] === "string") {
       existing.id += fragment["id"];
     }
@@ -303,6 +306,9 @@ function collectToolFragments(
       }
       if (typeof fn["arguments"] === "string") {
         existing.arguments += fn["arguments"];
+        if (existing.arguments.length > 5_000_000) {
+          throw new OpenAICompatibleError("arguments_too_large", "Tool arguments exceeded maximum length.", false);
+        }
       }
     }
     calls.set(index, existing);
