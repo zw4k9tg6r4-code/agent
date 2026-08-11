@@ -966,6 +966,7 @@ export class JsonlSessionEventStore implements SessionEventStore {
 
   async #ensureSafeRoot(): Promise<void> {
     const workspaceRoot = dirname(dirname(this.#root));
+    const realWorkspace = await realpath(workspaceRoot);
     const agentDir = join(workspaceRoot, ".agent");
     for (const dir of [agentDir, this.#root]) {
       try {
@@ -974,7 +975,8 @@ export class JsonlSessionEventStore implements SessionEventStore {
           throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `session directory ${dir} must not be a symbolic link`);
         }
         const real = await realpath(dir);
-        if (real !== dir) {
+        const expectedReal = dir === agentDir ? join(realWorkspace, ".agent") : join(realWorkspace, ".agent", "sessions");
+        if (real !== expectedReal) {
           throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `session directory ${dir} must not be a reparse point or symlink`);
         }
       } catch (error: any) {
