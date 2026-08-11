@@ -245,7 +245,7 @@ describe("runModelLoop", () => {
       workspaceRoot: "C:/workspace",
       permissionMode: "workspace",
       messages: [{ role: "user", content: "test" }],
-      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100 },
+      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100, timeoutMs: 300000 },
       signal: new AbortController().signal,
     });
     expect(resultUndefined).toMatchObject({
@@ -266,7 +266,7 @@ describe("runModelLoop", () => {
       workspaceRoot: "C:/workspace",
       permissionMode: "workspace",
       messages: [{ role: "user", content: "test" }],
-      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100 },
+      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100, timeoutMs: 300000 },
       signal: new AbortController().signal,
     });
     expect(resultEmptyTools).toMatchObject({
@@ -287,7 +287,7 @@ describe("runModelLoop", () => {
       workspaceRoot: "C:/workspace",
       permissionMode: "workspace",
       messages: [{ role: "user", content: "test" }],
-      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100 },
+      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100, timeoutMs: 300000 },
       signal: new AbortController().signal,
     })).rejects.toThrow("Model cancelled.");
   });
