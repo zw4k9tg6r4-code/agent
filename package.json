@@ -10,11 +10,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w @agent/contracts && npm run build -w @agent/tools && npm run build -w @agent/policy && npm run build -w @agent/core && npm run build -w @agent/providers && npm run build -w @agent/cli",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "verify": "npm run typecheck && npm run test && npm run build"
+    "verify": "npm run build && npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

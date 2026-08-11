@@ -219,9 +219,7 @@ function obviousPath(argument: string): string | undefined {
   return (
     path.isAbsolute(candidate) ||
     /^[A-Za-z]:[\\/]/u.test(candidate) ||
-    candidate === ".." ||
-    candidate.startsWith("../") ||
-    candidate.startsWith("..\\")
+    /(?:^|[\\/])\.\.(?:[\\/]|$)/u.test(candidate)
   )
     ? candidate
     : undefined;

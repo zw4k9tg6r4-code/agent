@@ -219,9 +219,25 @@ describe("DefaultPermissionEvaluator direct-process matrix", () => {
         cwd: ".",
       }),
     );
+    const escapedMidPath = await evaluator.evaluate(
+      request("trusted", "shell_execute", "execute", {
+        program: "node",
+        args: ["subdir/../../outside.js"],
+        cwd: ".",
+      }),
+    );
+    const escapedOutputArg = await evaluator.evaluate(
+      request("trusted", "shell_execute", "execute", {
+        program: "node",
+        args: ["--output=subdir/../../outside.txt"],
+        cwd: ".",
+      }),
+    );
 
     expect(opaque).toMatchObject({ outcome: "deny", ruleId: "input.invalid" });
     expect(escaped).toMatchObject({ outcome: "deny", ruleId: "path.escape" });
+    expect(escapedMidPath).toMatchObject({ outcome: "deny", ruleId: "path.escape" });
+    expect(escapedOutputArg).toMatchObject({ outcome: "deny", ruleId: "path.escape" });
   });
 
   it("denies a call/definition mismatch and an unknown tool", async () => {
