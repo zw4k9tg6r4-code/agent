@@ -41,3 +41,13 @@ export {
   type RuntimeFactoryInput,
   type RuntimeModules,
 } from "./runtime.js";
+export {
+  runNonInteractiveCommand,
+  type CommandContext,
+} from "./commands.js";
+export {
+  formatSession,
+  reportFinished,
+  reportRestore,
+  reportTurn,
+} from "./format.js";
