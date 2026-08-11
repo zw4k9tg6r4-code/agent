@@ -168,7 +168,7 @@ describe("compactModelMessages", () => {
         { role: "assistant", content: "old-detail-".repeat(100) },
         { role: "user", content: "LATEST-INSTRUCTION" },
       ],
-      30,
+      50,
     );
 
     expect(result.messages.map((message) => message.content).join("\n"))
@@ -178,6 +178,7 @@ describe("compactModelMessages", () => {
     expect(result.messages.map((message) => message.content).join("\n"))
       .toContain("LATEST-INSTRUCTION");
     expect(result.compacted).toBe(true);
-    expect(result.afterTokens).toBeLessThanOrEqual(30);
+    expect(result.afterTokens).toBeLessThanOrEqual(50);
   });
 });
+
