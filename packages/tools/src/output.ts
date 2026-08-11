@@ -1,5 +1,3 @@
-import { Buffer } from "node:buffer";
-
 const TRUNCATION_MARKER = "\n...[output truncated]...\n";
 const MINIMUM_LIMIT_BYTES = 32;
 
