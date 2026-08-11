@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "provider": {
+    "kind": "openai-compatible",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4.1-mini",
+    "apiKeyEnv": "OPENAI_API_KEY",
+    "requestTimeoutMs": 60000,
+    "maxRetries": 2
+  },
+  "permissionMode": "workspace",
+  "limits": {
+    "maxSteps": 30,
+    "maxContextTokens": 64000,
+    "maxOutputTokens": 8000,
+    "timeoutMs": 300000
+  },
+  "skills": [
+    "review"
+  ]
+}
