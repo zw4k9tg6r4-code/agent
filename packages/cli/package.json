@@ -24,6 +24,10 @@
     "test": "vitest run test"
   },
   "dependencies": {
-    "@agent/contracts": "0.0.0"
+    "@agent/contracts": "0.0.0",
+    "@agent/core": "0.0.0",
+    "@agent/policy": "0.0.0",
+    "@agent/providers": "0.0.0",
+    "@agent/tools": "0.0.0"
   }
 }

@@ -29,3 +29,15 @@ export {
   type InterruptHandle,
   type SignalSource,
 } from "./signals.js";
+export {
+  DEFAULT_RUNTIME_MODULES,
+  ProductionRuntimeFactory,
+  type AgentCoreOptions,
+  type CheckpointStoreConstructor,
+  type CliRuntimeFactory,
+  type PermissionEvaluatorConstructor,
+  type ProviderConstructor,
+  type RuntimeBundle,
+  type RuntimeFactoryInput,
+  type RuntimeModules,
+} from "./runtime.js";
