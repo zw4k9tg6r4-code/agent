@@ -42,9 +42,11 @@ export {
   type RuntimeModules,
 } from "./runtime.js";
 export {
+  runCommand,
   runNonInteractiveCommand,
   type CommandContext,
 } from "./commands.js";
+
 export {
   formatSession,
   reportFinished,

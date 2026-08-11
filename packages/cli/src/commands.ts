@@ -40,6 +40,17 @@ async function createRuntime(
   return { config, ...bundle };
 }
 
+async function finish(
+  sessionId: string,
+  runner: RuntimeBundle["runner"],
+  context: CommandContext,
+): Promise<ExitCode> {
+  return reportFinished(
+    await runner.finishSession({ sessionId, signal: context.signal }),
+    context.io,
+  );
+}
+
 async function runOneShot(
   task: string,
   context: CommandContext,
@@ -53,15 +64,8 @@ async function runOneShot(
     limits: config.limits,
     signal: context.signal,
   });
-  const turnCode = reportTurn(turn, context.io);
-  if (turnCode !== null) return turnCode;
-  return reportFinished(
-    await runner.finishSession({
-      sessionId: turn.sessionId,
-      signal: context.signal,
-    }),
-    context.io,
-  );
+  const code = reportTurn(turn, context.io);
+  return code ?? finish(turn.sessionId, runner, context);
 }
 
 async function listSessions(context: CommandContext): Promise<ExitCode> {
@@ -103,6 +107,111 @@ async function undoSession(
   });
 }
 
+async function shouldInvokeResume(
+  sessions: JsonlSessionEventStore,
+  sessionId: string,
+): Promise<boolean> {
+  let activeTurnId: string | undefined;
+  const pendingToolCallIds = new Set<string>();
+  for await (const event of sessions.read(sessionId)) {
+    if (event.type === "turn_started") {
+      activeTurnId = event.turnId;
+    } else if (
+      (event.type === "turn_completed" || event.type === "turn_failed")
+      && event.turnId === activeTurnId
+    ) {
+      activeTurnId = undefined;
+    }
+    if (event.type === "model_response_completed") {
+      for (const call of event.message.toolCalls ?? []) {
+        pendingToolCallIds.add(call.id);
+      }
+    } else if (event.type === "tool_requested") {
+      pendingToolCallIds.add(event.call.id);
+    } else if (event.type === "tool_completed" || event.type === "tool_failed") {
+      pendingToolCallIds.delete(event.result.toolCallId);
+    }
+  }
+  return activeTurnId !== undefined || pendingToolCallIds.size > 0;
+}
+
+async function interactiveLoop(
+  context: CommandContext,
+  initialSessionId?: string,
+  resume = false,
+): Promise<ExitCode> {
+  let sessionId = initialSessionId;
+  let loaded:
+    | ({ readonly config: AgentConfig } & RuntimeBundle)
+    | undefined;
+
+  if (resume) {
+    const item = sessionId === undefined
+      ? undefined
+      : await context.sessions.get(sessionId);
+    if (item === undefined) {
+      throw new CliError(
+        "SESSION_NOT_FOUND",
+        EXIT_CODES.usageOrConfig,
+        `session not found: ${sessionId ?? ""}`,
+      );
+    }
+    if (item.state !== "running") {
+      throw new CliError(
+        "DATA_ERROR",
+        EXIT_CODES.usageOrConfig,
+        `session ${item.sessionId} is not resumable: ${item.state}`,
+      );
+    }
+    loaded = await createRuntime(context);
+    if (await shouldInvokeResume(context.sessions, item.sessionId)) {
+      const resumed = await loaded.runner.runTurn({
+        kind: "resume",
+        sessionId: item.sessionId,
+        limits: loaded.config.limits,
+        signal: context.signal,
+      });
+      const code = reportTurn(resumed, context.io);
+      if (code !== null) return code;
+      sessionId = resumed.sessionId;
+    }
+  }
+
+  while (true) {
+    const input = await context.io.readLine("agent> ", context.signal);
+    if (input === null || input.trim() === "/exit") {
+      if (context.signal.aborted) return EXIT_CODES.cancelled;
+      if (sessionId === undefined || loaded === undefined) {
+        return EXIT_CODES.success;
+      }
+      return finish(sessionId, loaded.runner, context);
+    }
+
+    const message = input.trim();
+    if (message.length === 0) continue;
+    loaded ??= await createRuntime(context);
+    const turn = sessionId === undefined
+      ? await loaded.runner.runTurn({
+          kind: "new",
+          task: message,
+          workspaceRoot: context.workspaceRoot,
+          permissionMode: loaded.config.permissionMode,
+          limits: loaded.config.limits,
+          signal: context.signal,
+        })
+      : await loaded.runner.runTurn({
+          kind: "continue",
+          sessionId,
+          message,
+          limits: loaded.config.limits,
+          signal: context.signal,
+        });
+    const code = reportTurn(turn, context.io);
+    if (code !== null) return code;
+    sessionId = turn.sessionId;
+  }
+}
+
 export async function runNonInteractiveCommand(
   command: CliCommand,
   context: CommandContext,
@@ -128,4 +237,18 @@ export async function runNonInteractiveCommand(
   if (command.kind === "undo") return undoSession(command.sessionId, context);
   if (command.kind === "run") return runOneShot(command.task, context);
   return null;
+}
+
+export async function runCommand(
+  command: CliCommand,
+  context: CommandContext,
+): Promise<ExitCode> {
+  const nonInteractive = await runNonInteractiveCommand(command, context);
+  if (nonInteractive !== null) return nonInteractive;
+  return command.kind === "resume"
+    ? context.sessions.withSessionLease(
+        command.sessionId,
+        async () => interactiveLoop(context, command.sessionId, true),
+      )
+    : interactiveLoop(context);
 }
