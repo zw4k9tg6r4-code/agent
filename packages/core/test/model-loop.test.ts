@@ -227,6 +227,69 @@ describe("runModelLoop", () => {
       error: { code: "max_output_tokens_exceeded" },
     });
     expect(exhaustedProvider.requests).toHaveLength(1);
+    expect(exhaustedStore.events("session-1").filter((e) => e.type === "tool_failed")).toHaveLength(1);
+  });
+
+  it("fails when model returns tool_use without tools or undefined stop reason or cancelled", async () => {
+    const store = new MemorySessionStore();
+    const providerUndefined = new ScriptedProvider([
+      [
+        { type: "text_delta", delta: "hi" },
+        { type: "completed", stopReason: undefined as any },
+      ],
+    ]);
+    const resultUndefined = await runModelLoop({
+      dependencies: makeDependencies({ provider: providerUndefined, sessions: store }),
+      sessionId: "s-1",
+      turnId: "t-1",
+      workspaceRoot: "C:/workspace",
+      permissionMode: "workspace",
+      messages: [{ role: "user", content: "test" }],
+      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100 },
+      signal: new AbortController().signal,
+    });
+    expect(resultUndefined).toMatchObject({
+      kind: "failed",
+      error: { code: "model_stream_incomplete", message: "Model stream ended without a completed event." }
+    });
+
+    const providerEmptyTools = new ScriptedProvider([
+      [
+        { type: "text_delta", delta: "hi" },
+        { type: "completed", stopReason: "tool_use" },
+      ],
+    ]);
+    const resultEmptyTools = await runModelLoop({
+      dependencies: makeDependencies({ provider: providerEmptyTools, sessions: store }),
+      sessionId: "s-2",
+      turnId: "t-2",
+      workspaceRoot: "C:/workspace",
+      permissionMode: "workspace",
+      messages: [{ role: "user", content: "test" }],
+      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100 },
+      signal: new AbortController().signal,
+    });
+    expect(resultEmptyTools).toMatchObject({
+      kind: "failed",
+      error: { code: "model_tool_call_missing", message: "Model stopped for tool use without a tool call." }
+    });
+
+    const providerCancelled = new ScriptedProvider([
+      [
+        { type: "text_delta", delta: "hi" },
+        { type: "completed", stopReason: "cancelled" },
+      ],
+    ]);
+    await expect(runModelLoop({
+      dependencies: makeDependencies({ provider: providerCancelled, sessions: store }),
+      sessionId: "s-3",
+      turnId: "t-3",
+      workspaceRoot: "C:/workspace",
+      permissionMode: "workspace",
+      messages: [{ role: "user", content: "test" }],
+      limits: { maxSteps: 3, maxContextTokens: 1000, maxOutputTokens: 100 },
+      signal: new AbortController().signal,
+    })).rejects.toThrow("Model cancelled.");
   });
 
   it("records context compaction before the affected model request", async () => {

@@ -342,4 +342,42 @@ describe("createAgentRunner", () => {
       ),
     ).toEqual([]);
   });
+
+  it("throws for invalid inputs and session states", async () => {
+    const store = new MemorySessionStore();
+    const runner = createAgentRunner(
+      makeDependencies({ provider: new ScriptedProvider([]), sessions: store }),
+      {},
+      { contextLoader: new StaticContextLoader(), createId: ids() },
+    );
+    const signal = new AbortController().signal;
+
+    await expect(
+      runner.runTurn({ kind: "new", sessionId: "s-1", task: "x", workspaceRoot: "w", permissionMode: "readonly", limits: { ...limits, maxSteps: 0 }, signal })
+    ).rejects.toMatchObject({ code: "invalid_run_limits" });
+
+    await runner.runTurn({ kind: "new", sessionId: "s-1", task: "x", workspaceRoot: "w", permissionMode: "readonly", limits, signal });
+
+    await expect(
+      runner.runTurn({ kind: "new", sessionId: "s-1", task: "x", workspaceRoot: "w", permissionMode: "readonly", limits, signal })
+    ).rejects.toMatchObject({ code: "session_exists" });
+
+    await expect(
+      runner.runTurn({ kind: "continue", sessionId: "s-2", message: "x", limits, signal })
+    ).rejects.toMatchObject({ code: "session_not_found" });
+
+    await expect(
+      runner.finishSession({ sessionId: "s-2", signal })
+    ).rejects.toMatchObject({ code: "session_not_found" });
+
+    await runner.finishSession({ sessionId: "s-1", signal });
+
+    await expect(
+      runner.runTurn({ kind: "continue", sessionId: "s-1", message: "x", limits, signal })
+    ).rejects.toMatchObject({ code: "session_terminal" });
+
+    await expect(
+      runner.finishSession({ sessionId: "s-1", signal })
+    ).rejects.toMatchObject({ code: "session_terminal" });
+  });
 });

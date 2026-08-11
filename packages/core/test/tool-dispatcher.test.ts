@@ -155,8 +155,45 @@ describe("dispatchToolCall", () => {
       ok: false,
       error: { code: "permission_denied" },
     });
+    expect(result.toolCallId).toBe("call-1");
+    expect(result.ok).toBe(false);
     expect(confirmations.calls).toBe(0);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("handles permission evaluation failure and tool execution failure", async () => {
+    const errorTool = makeTool("error_tool", async () => {
+      throw new Error("Execution exploded");
+    });
+
+    const store = new MemorySessionStore();
+    const call1 = { id: "c-err", name: "error_tool", arguments: {} };
+    const base = baseInput(new FixedPermissionEvaluator([]), new FixedConfirmer([]), store);
+
+    const permResult = await dispatchToolCall({
+      ...base,
+      state: { ...base.state, call: call1 },
+      tools: [errorTool],
+      permissions: {
+        evaluate: async () => { throw new Error("Permission exploded"); }
+      } as any,
+    });
+    expect(permResult).toMatchObject({
+      ok: false,
+      error: { code: "permission_evaluation_failed", message: "Permission exploded" }
+    });
+
+    const call2 = { id: "c-err2", name: "error_tool", arguments: {} };
+    const execResult = await dispatchToolCall({
+      ...base,
+      state: { ...base.state, call: call2 },
+      permissions: new FixedPermissionEvaluator([{ outcome: "allow", reason: "test", ruleId: "test", resolvedArguments: {} }]),
+      tools: [errorTool],
+    });
+    expect(execResult).toMatchObject({
+      ok: false,
+      error: { code: "tool_execution_failed", message: "Execution exploded" }
+    });
   });
 
   it("returns structured failures for unknown tools and mismatched result ids", async () => {

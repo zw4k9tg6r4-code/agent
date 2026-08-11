@@ -12,6 +12,7 @@ import type {
 } from "@agent/contracts";
 
 import type { PendingToolState } from "./history.js";
+import { sanitizeToolResult } from "./redaction.js";
 
 export interface DispatchToolInput {
   readonly state: PendingToolState;
@@ -203,6 +204,8 @@ export async function dispatchToolCall(
       true,
     );
   }
+
+  result = sanitizeToolResult(result);
 
   if (result.toolCallId !== input.state.call.id) {
     result = failure(

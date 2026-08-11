@@ -30,3 +30,4 @@ export {
   ToolDispatchError,
   type DispatchToolInput,
 } from "./tool-dispatcher.js";
+export { sanitizeToolResult } from "./redaction.js";
