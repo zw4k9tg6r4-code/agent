@@ -17,3 +17,8 @@ export {
   initializeWorkspace,
   type InitializeResult,
 } from "./init.js";
+export {
+  JsonlSessionEventStore,
+  type SessionDetails,
+  type SessionStoreOptions,
+} from "./session-store.js";
