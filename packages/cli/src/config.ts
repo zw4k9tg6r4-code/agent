@@ -68,11 +68,21 @@ function text(value: unknown, path: string): string {
   return value.trim();
 }
 
+const MAX_SAFE_TIMEOUT_MS = 2_147_483_647; // 2^31 - 1 (max for setTimeout)
+
 function positiveInteger(value: unknown, path: string): number {
   if (!Number.isInteger(value) || (value as number) <= 0) {
     throw configError(`${path} must be a positive integer`);
   }
   return value as number;
+}
+
+function timeoutMs(value: unknown, path: string): number {
+  const n = positiveInteger(value, path);
+  if (n > MAX_SAFE_TIMEOUT_MS) {
+    throw configError(`${path} must not exceed ${MAX_SAFE_TIMEOUT_MS} (2^31-1)`);
+  }
+  return n;
 }
 
 function retryCount(value: unknown): number {
@@ -140,6 +150,14 @@ function skillNames(value: unknown): readonly string[] {
   });
 }
 
+function profileIdString(value: unknown, path: string): string {
+  const id = text(value, path);
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) {
+    throw configError(`${path} must contain only alphanumeric characters and hyphens`);
+  }
+  return id;
+}
+
 export function parseAgentConfig(value: unknown): AgentConfig {
   const root = record(value, "configuration");
   if (root["version"] !== 1) throw configError("version must be 1");
@@ -175,9 +193,9 @@ export function parseAgentConfig(value: unknown): AgentConfig {
     version: 1,
     provider: {
       kind: "openai-compatible",
-      profileId: text(provider["profileId"], "provider.profileId"),
+      profileId: profileIdString(provider["profileId"], "provider.profileId"),
       model: text(provider["model"], "provider.model"),
-      requestTimeoutMs: positiveInteger(
+      requestTimeoutMs: timeoutMs(
         provider["requestTimeoutMs"],
         "provider.requestTimeoutMs",
       ),
@@ -259,26 +277,44 @@ export async function loadProviderProfile(
     throw error;
   }
 
-  let profiles: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    profiles = JSON.parse(raw) as Record<string, unknown>;
+    parsed = JSON.parse(raw);
   } catch {
     throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `file is not valid JSON: ${path}`);
   }
 
-  const profile = profiles[profileId];
-  if (typeof profile !== "object" || profile === null || Array.isArray(profile)) {
+  // Support both v1 (flat) and v2 (named profiles map) formats.
+  // v1 format (legacy): top-level object has baseUrl and apiKeyEnv directly.
+  // v2 format (current): top-level object is a map of profileId -> { baseUrl, apiKeyEnv }.
+  let profileRecord: Record<string, unknown> | undefined;
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed)
+  ) {
+    const root = parsed as Record<string, unknown>;
+    // v1 detection: has baseUrl/apiKeyEnv at the top level
+    if (typeof root["baseUrl"] === "string" && typeof root["apiKeyEnv"] === "string") {
+      // Legacy v1 flat format – treat the whole object as the profile
+      profileRecord = root;
+    } else {
+      // v2 named-profile format
+      const candidate = root[profileId];
+      if (typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)) {
+        profileRecord = candidate as Record<string, unknown>;
+      }
+    }
+  }
+
+  if (profileRecord === undefined) {
     throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `profile "${profileId}" is not a valid object in ${path}`);
   }
-  
-  const p = profile as Record<string, unknown>;
-  // We use text() to wrap error messages slightly differently here,
-  // but baseUrl() and environmentName() expect a generic config path.
-  // We can temporarily spoof the path string or just catch and wrap.
+
   try {
     return {
-      baseUrl: baseUrl(p["baseUrl"]),
-      apiKeyEnv: environmentName(p["apiKeyEnv"]),
+      baseUrl: baseUrl(profileRecord["baseUrl"]),
+      apiKeyEnv: environmentName(profileRecord["apiKeyEnv"]),
     };
   } catch (error) {
     if (error instanceof CliError) {

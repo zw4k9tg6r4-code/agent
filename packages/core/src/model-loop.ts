@@ -167,6 +167,7 @@ export async function runModelLoop(
   let usage = input.initialUsage ?? ZERO_USAGE;
   let steps = input.initialSteps ?? 0;
   let latestOutput = "";
+  const seenCallIds = new Set<string>();
 
   if ((input.pendingToolStates?.length ?? 0) > 0) {
     await dispatchStates(
@@ -219,7 +220,6 @@ export async function runModelLoop(
     const calls: ToolCall[] = [];
     let text = "";
     let textLength = 0;
-    const callIds = new Set<string>();
     let requestUsage: TokenUsage | undefined;
     let stopReason: ModelStopReason | undefined;
     try {
@@ -245,13 +245,13 @@ export async function runModelLoop(
             text: event.delta,
           });
         } else if (event.type === "tool_call") {
-          if (callIds.has(event.call.id)) {
+          if (seenCallIds.has(event.call.id)) {
             throw new AgentCoreError("duplicate_tool_call_id", `Model generated duplicate tool call ID: ${event.call.id}`);
           }
           if (calls.length >= 30) {
             throw new AgentCoreError("too_many_tool_calls", "Model generated too many tool calls in a single turn.");
           }
-          callIds.add(event.call.id);
+          seenCallIds.add(event.call.id);
           calls.push(event.call);
         } else if (event.type === "usage") {
           requestUsage = event.usage;
@@ -287,8 +287,23 @@ export async function runModelLoop(
         },
       };
     }
-    const observedUsage =
-      requestUsage ?? estimateUsage(requestMessages, text);
+    let observedUsage = estimateUsage(requestMessages, text);
+    if (
+      requestUsage &&
+      typeof requestUsage.inputTokens === "number" &&
+      typeof requestUsage.outputTokens === "number" &&
+      typeof requestUsage.totalTokens === "number" &&
+      Number.isSafeInteger(requestUsage.inputTokens) &&
+      Number.isSafeInteger(requestUsage.outputTokens) &&
+      Number.isSafeInteger(requestUsage.totalTokens) &&
+      requestUsage.inputTokens >= 0 &&
+      requestUsage.outputTokens >= 0 &&
+      requestUsage.totalTokens >= 0 &&
+      requestUsage.totalTokens === requestUsage.inputTokens + requestUsage.outputTokens
+    ) {
+      observedUsage = requestUsage;
+    }
+
     const assistant = calls.length === 0
       ? { role: "assistant" as const, content: text }
       : {

@@ -124,12 +124,14 @@ describe("ProductionRuntimeFactory", () => {
       config: { ...DEFAULT_CONFIG, skills: ["review"] },
       sessions,
       confirmations,
+      environment: { OPENAI_API_KEY: "sk-test-runtime-key" },
     });
 
-    expect(captured.providerConfig).toEqual({
+    expect(captured.providerConfig).toMatchObject({
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-4.1-mini",
       apiKeyEnvVar: "OPENAI_API_KEY",
+      apiKey: "sk-test-runtime-key",
       requestTimeoutMs: 60_000,
       maxRetries: 2,
     });

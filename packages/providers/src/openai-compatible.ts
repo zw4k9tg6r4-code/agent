@@ -10,6 +10,7 @@ import type {
   ToolCall,
 } from "@agent/contracts";
 
+import { Buffer } from "node:buffer";
 import { decodeSseData } from "./sse.js";
 
 export interface OpenAICompatibleProviderConfig {
@@ -17,6 +18,8 @@ export interface OpenAICompatibleProviderConfig {
   readonly baseUrl: string;
   readonly model: string;
   readonly apiKeyEnvVar: string;
+  /** Optional pre-resolved API key. When set, takes precedence over env var lookup. */
+  readonly apiKey?: string;
   readonly requestTimeoutMs: number;
   readonly maxRetries?: number;
   readonly temperature?: number;
@@ -58,8 +61,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Redacts an API key from a message using a flexible token-based approach.
+ * Handles URL-encoded, partially masked, and literal appearances of the key.
+ */
 function redactApiKey(message: string, apiKey: string): string {
-  return message.replaceAll(apiKey, "[REDACTED]");
+  if (apiKey.length === 0) return message;
+  // Literal replacement
+  let result = message.replaceAll(apiKey, "[REDACTED]");
+  // URL-encoded replacement (e.g. %20 encoded chars)
+  const urlEncoded = encodeURIComponent(apiKey);
+  if (urlEncoded !== apiKey) {
+    result = result.replaceAll(urlEncoded, "[REDACTED]");
+  }
+  // Bearer token pattern: "Bearer <token>"
+  const bearerPattern = /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gu;
+  result = result.replace(bearerPattern, "Bearer [REDACTED]");
+  return result;
 }
 
 function safeCause(error: unknown, apiKey: string): Error | undefined {
@@ -108,8 +125,8 @@ function requireNonEmpty(value: string, field: string): string {
 
 function validateConfig(
   config: OpenAICompatibleProviderConfig,
-): Required<Omit<OpenAICompatibleProviderConfig, "id" | "temperature">> &
-  Pick<OpenAICompatibleProviderConfig, "id" | "temperature"> {
+): Required<Omit<OpenAICompatibleProviderConfig, "id" | "temperature" | "apiKey">> &
+  Pick<OpenAICompatibleProviderConfig, "id" | "temperature" | "apiKey"> {
   const baseUrl = requireNonEmpty(config.baseUrl, "baseUrl").replace(/\/+$/, "");
   let parsed: URL;
   try {
@@ -165,6 +182,7 @@ function validateConfig(
     ...(config.temperature === undefined
       ? {}
       : { temperature: config.temperature }),
+    ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
   };
 }
 
@@ -324,7 +342,7 @@ function collectToolFragments(
       }
       if (typeof fn["arguments"] === "string") {
         existing.arguments += fn["arguments"];
-        state.argumentsBytes += fn["arguments"].length;
+        state.argumentsBytes += Buffer.byteLength(fn["arguments"], "utf8");
         if (state.argumentsBytes > 5_000_000) {
           throw new OpenAICompatibleError("arguments_too_large", "Aggregate tool arguments exceeded maximum length.", false);
         }
@@ -504,8 +522,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     request: ModelRequest,
     options: ModelProviderOptions,
   ): AsyncIterable<ModelEvent> {
-    const apiKey = this.#runtime.env[this.#config.apiKeyEnvVar];
-    if (apiKey === undefined || apiKey.trim().length === 0) {
+    // Prefer the pre-resolved apiKey passed in config; fall back to env lookup.
+    const rawApiKey =
+      this.#config.apiKey ?? this.#runtime.env[this.#config.apiKeyEnvVar];
+    const apiKey = rawApiKey?.trim();
+    if (apiKey === undefined || apiKey.length === 0) {
       throw new OpenAICompatibleError(
         "missing_api_key",
         `Set ${this.#config.apiKeyEnvVar} before running the Agent.`,
@@ -674,7 +695,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
             const delta = choice["delta"];
             if (isRecord(delta)) {
               if (typeof delta["content"] === "string") {
-                state.textBytes += delta["content"].length;
+                state.textBytes += Buffer.byteLength(delta["content"], "utf8");
                 if (state.textBytes > 5_000_000) {
                   throw new OpenAICompatibleError("text_too_large", "Aggregate text exceeded maximum length.", false);
                 }

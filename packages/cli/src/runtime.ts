@@ -24,7 +24,7 @@ import type {
   Tool,
 } from "@agent/contracts";
 
-import { loadProviderProfile, type AgentConfig } from "./config.js";
+import { loadProviderProfile, resolveApiKey, type AgentConfig } from "./config.js";
 
 export type { AgentCoreOptions } from "@agent/core";
 
@@ -55,6 +55,8 @@ export interface RuntimeFactoryInput {
   readonly config: AgentConfig;
   readonly sessions: SessionEventStore;
   readonly confirmations: PermissionConfirmer;
+  /** Process environment used to resolve the API key. Defaults to process.env. */
+  readonly environment?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface RuntimeBundle {
@@ -84,10 +86,15 @@ export class ProductionRuntimeFactory implements CliRuntimeFactory {
 
   async create(input: RuntimeFactoryInput): Promise<RuntimeBundle> {
     const profile = await loadProviderProfile(input.config.provider.profileId);
+    // Pre-resolve and trim the API key so both the pre-check (resolveApiKey)
+    // and the runtime provider use exactly the same sanitized key value.
+    const env = input.environment ?? process.env;
+    const apiKey = resolveApiKey(profile, env);
     const provider = new this.#modules.OpenAICompatibleProvider({
       baseUrl: profile.baseUrl,
       model: input.config.provider.model,
       apiKeyEnvVar: profile.apiKeyEnv,
+      apiKey,
       requestTimeoutMs: input.config.provider.requestTimeoutMs,
       maxRetries: input.config.provider.maxRetries,
     });

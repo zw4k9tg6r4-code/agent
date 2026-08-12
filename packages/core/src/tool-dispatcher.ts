@@ -216,13 +216,50 @@ export async function dispatchToolCall(
     );
   }
 
-  if (result.ok) {
-    const outputBytes = Buffer.byteLength(result.output, "utf8");
-    if (outputBytes > tool.definition.outputLimitBytes) {
+  const limitBytes = tool.definition.outputLimitBytes;
+  
+  if (typeof result.output === "string") {
+    if (Buffer.byteLength(result.output, "utf8") > limitBytes) {
       result = failure(
         input.state.call,
         "tool_output_too_large",
-        `Tool output exceeded the limit of ${tool.definition.outputLimitBytes} bytes.`,
+        `Tool output string exceeded the limit of ${limitBytes} bytes.`,
+      );
+    }
+  } else if (result.output !== undefined) {
+    try {
+      const outStr = JSON.stringify(result.output);
+      if (Buffer.byteLength(outStr, "utf8") > limitBytes) {
+        result = failure(
+          input.state.call,
+          "tool_output_too_large",
+          `Tool output object exceeded the limit of ${limitBytes} bytes.`,
+        );
+      }
+    } catch {
+      result = failure(
+        input.state.call,
+        "invalid_tool_result",
+        "Tool output could not be serialized to JSON.",
+      );
+    }
+  }
+
+  if (result.metadata !== undefined) {
+    try {
+      const metaStr = JSON.stringify(result.metadata);
+      if (Buffer.byteLength(metaStr, "utf8") > limitBytes) {
+        result = failure(
+          input.state.call,
+          "tool_metadata_too_large",
+          `Tool metadata exceeded the limit of ${limitBytes} bytes.`,
+        );
+      }
+    } catch {
+      result = failure(
+        input.state.call,
+        "invalid_tool_result",
+        "Tool metadata could not be serialized to JSON.",
       );
     }
   }

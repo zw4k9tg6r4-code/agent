@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 function eventBoundary(
   buffer: string,
 ): { readonly index: number; readonly length: number } | undefined {
@@ -45,7 +46,7 @@ export async function* decodeSseData(
         throw new Error("SSE stream exceeded maximum allowed bytes (20MB).");
       }
       buffer += decoder.decode(result.value, { stream: true });
-      if (buffer.length > 10_000_000) {
+      if (Buffer.byteLength(buffer, "utf8") > 10_000_000) {
         throw new Error("SSE frame exceeded maximum buffer size");
       }
       let boundary = eventBoundary(buffer);

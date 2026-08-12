@@ -69,6 +69,7 @@ const EVENT_TYPES = new Set<SessionEvent["type"]>([
   "context_compacted",
   "turn_completed",
   "turn_failed",
+  "turn_cancelled",
   "session_completed",
   "session_failed",
   "session_cancelled",
@@ -543,6 +544,10 @@ function validateEventPayload(
       text("code");
       text("message");
       return;
+    case "turn_cancelled":
+      text("turnId");
+      text("reason");
+      return;
     case "session_completed":
       if (typeof value["summary"] !== "string") {
         eventError(
@@ -670,7 +675,11 @@ function validateHistory(
       pendingToolCallIds.delete(event.result.toolCallId);
     }
 
-    if (event.type === "turn_completed" || event.type === "turn_failed") {
+    if (
+      event.type === "turn_completed" || 
+      event.type === "turn_failed" || 
+      event.type === "turn_cancelled"
+    ) {
       if (
         event.type === "turn_completed"
         && pendingToolCallIds.size > 0

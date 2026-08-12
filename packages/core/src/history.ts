@@ -100,8 +100,8 @@ function requireToolState(
 function failedToolContent(
   event: Extract<SessionEvent, { readonly type: "tool_failed" }>,
 ): string {
-  const output = typeof event.result.output === "string" 
-    ? event.result.output.slice(0, 4000) 
+  const output = typeof event.result.output === "string"
+    ? event.result.output.slice(0, 4000)
     : event.result.output;
   const errorMessage = event.result.error.message.slice(0, 4000);
   return JSON.stringify({

@@ -25,11 +25,17 @@ export function formatSession(details: SessionDetails): string {
   ].join("\t");
 }
 
+export function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 export function reportTurn(
   result: AgentTurnResult,
   io: CliIO,
 ): ExitCode | null {
   if (result.error !== undefined) {
+    const message = stripAnsi(result.error.message);
     if (result.error.code === "turn_cancelled") {
       io.writeError(
         `Task cancelled.\nSession: ${result.sessionId}\n`,
@@ -37,7 +43,7 @@ export function reportTurn(
       return EXIT_CODES.cancelled;
     }
     io.writeError(
-      `${result.error.message}\nSession: ${result.sessionId}\n`,
+      `${message}\nSession: ${result.sessionId}\n`,
     );
     return EXIT_CODES.runtimeFailure;
   }

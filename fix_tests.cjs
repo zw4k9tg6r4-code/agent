@@ -1,1 +1,0 @@
-const fs = require('fs'); const files = ['packages/core/test/agent-runner.test.ts', 'packages/core/test/resume.test.ts']; files.forEach(f => { let c = fs.readFileSync(f, 'utf8'); c = c.replace(/runTurn\(\{/g, 'runTurn({ workspaceRoot: \'C:/workspace\','); fs.writeFileSync(f, c); })

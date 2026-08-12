@@ -71,7 +71,7 @@ describe("createAgentRunner", () => {
       { contextLoader: new StaticContextLoader(), createId: ids() },
     );
 
-    const first = await runner.runTurn({ 
+    const first = await runner.runTurn({
       kind: "new",
       sessionId: "session-1",
       task: "first task",
@@ -81,7 +81,7 @@ describe("createAgentRunner", () => {
       signal: new AbortController().signal,
     });
     await expect(
-      runner.runTurn({ 
+      runner.runTurn({
         workspaceRoot: 'C:/workspace',
         kind: "resume",
         sessionId: "session-1",
@@ -91,7 +91,7 @@ describe("createAgentRunner", () => {
     ).rejects.toMatchObject({ code: "nothing_to_resume" });
     expect(provider.requests).toHaveLength(1);
 
-    const second = await runner.runTurn({ 
+    const second = await runner.runTurn({
       workspaceRoot: 'C:/workspace',
         kind: "continue",
       sessionId: "session-1",
@@ -163,7 +163,7 @@ describe("createAgentRunner", () => {
       { contextLoader: new StaticContextLoader(), createId: ids() },
     );
 
-    const result = await runner.runTurn({ 
+    const result = await runner.runTurn({
       kind: "new",
       sessionId: "session-timeout",
       task: "wait",
@@ -198,7 +198,7 @@ describe("createAgentRunner", () => {
       { contextLoader: new StaticContextLoader(), createId: ids() },
     );
 
-    const turn = await runner.runTurn({ 
+    const turn = await runner.runTurn({
       kind: "new",
       sessionId: "session-limited",
       task: "be concise",
@@ -291,7 +291,7 @@ describe("createAgentRunner", () => {
       { contextLoader: new StaticContextLoader(), createId: ids() },
     );
 
-    const first = await runner.runTurn({ 
+    const first = await runner.runTurn({
       kind: "new",
       sessionId: "session-cancelled",
       task: "cancel me",
@@ -307,7 +307,7 @@ describe("createAgentRunner", () => {
       error: { code: "turn_cancelled", message: "cancel-1" },
     });
 
-    const second = await runner.runTurn({ 
+    const second = await runner.runTurn({
       workspaceRoot: 'C:/workspace',
         kind: "resume",
       sessionId: "session-cancelled",
@@ -321,7 +321,7 @@ describe("createAgentRunner", () => {
       error: { code: "turn_cancelled", message: "cancel-2" },
     });
 
-    const third = await runner.runTurn({ 
+    const third = await runner.runTurn({
       workspaceRoot: 'C:/workspace',
         kind: "resume",
       sessionId: "session-cancelled",

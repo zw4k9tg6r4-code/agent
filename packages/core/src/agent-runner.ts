@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
 
 import type {
   AgentDependencies,
@@ -196,7 +197,14 @@ class DefaultAgentRunner implements AgentRunner {
           `Session already exists: ${sessionId}`,
         );
       }
-      workspaceRoot = options.workspaceRoot;
+      // Canonicalize the path to avoid symlink/trailing-slash mismatches
+      let canonicalRoot: string;
+      try {
+        canonicalRoot = await realpath(options.workspaceRoot);
+      } catch {
+        canonicalRoot = options.workspaceRoot;
+      }
+      workspaceRoot = canonicalRoot;
       permissionMode = options.permissionMode;
       userMessage = normalizeMessage(options.task, "task");
       await this.#dependencies.sessions.append(sessionId, {
@@ -222,14 +230,28 @@ class DefaultAgentRunner implements AgentRunner {
         this.#dependencies.sessions,
         sessionId,
       );
-      if (priorSnapshot.workspaceRoot !== options.workspaceRoot) {
+      permissionMode = priorSnapshot.permissionMode;
+      // Canonicalize both sides before comparing to handle symlinks and
+      // trailing slashes that would otherwise cause false-positive mismatches.
+      let incomingCanonical: string;
+      try {
+        incomingCanonical = await realpath(options.workspaceRoot);
+      } catch {
+        incomingCanonical = options.workspaceRoot;
+      }
+      let storedCanonical: string;
+      try {
+        storedCanonical = await realpath(priorSnapshot.workspaceRoot);
+      } catch {
+        storedCanonical = priorSnapshot.workspaceRoot;
+      }
+      if (storedCanonical !== incomingCanonical) {
         throw new AgentCoreError(
           "workspace_mismatch",
           `Session was started in a different workspace: ${priorSnapshot.workspaceRoot}`,
         );
       }
       workspaceRoot = priorSnapshot.workspaceRoot;
-      permissionMode = priorSnapshot.permissionMode;
       if (options.kind === "continue") {
         if (priorSnapshot.unknownToolCallIds.length > 0) {
           throw new AgentCoreError(

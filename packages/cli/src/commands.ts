@@ -38,6 +38,7 @@ async function createRuntime(
     config,
     sessions: context.sessions,
     confirmations: new TerminalPermissionConfirmer(context.io),
+    environment: context.environment,
   });
   return { config, ...bundle };
 }
@@ -147,7 +148,7 @@ async function shouldInvokeResume(
     if (event.type === "turn_started") {
       activeTurnId = event.turnId;
     } else if (
-      (event.type === "turn_completed" || event.type === "turn_failed")
+      (event.type === "turn_completed" || event.type === "turn_failed" || event.type === "turn_cancelled")
       && event.turnId === activeTurnId
     ) {
       activeTurnId = undefined;

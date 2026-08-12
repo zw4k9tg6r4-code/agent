@@ -32,6 +32,8 @@ const MAX_CHECKPOINT_BLOB_BYTES =
   Math.ceil((MAX_CHECKPOINT_FILE_BYTES * 4) / 3) + 16 * 1024;
 const MAX_CHECKPOINT_RECORD_BYTES = 16 * 1024;
 const MAX_CHECKPOINT_RECORDS = 10_000;
+/** Maximum total bytes of captured file content per session (500 MB). */
+const MAX_SESSION_CHECKPOINT_BYTES = 500 * 1024 * 1024;
 const RECORD_NAME = /^[a-f0-9]{64}\.json$/u;
 const BLOB_NAME = /^[a-f0-9]{64}\.blob\.json$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -403,6 +405,29 @@ export class FileCheckpointStore implements CheckpointStore {
       const existingBlob = await readBlob(blobPath, request.signal);
       validateRecordBlob(existingRecord, existingBlob);
       return;
+    }
+
+    // Enforce the per-session total byte limit before writing new data.
+    const allNames = (await readdir(directory)).filter((n) => BLOB_NAME.test(n));
+    if (allNames.length >= MAX_CHECKPOINT_RECORDS) {
+      throw new Error(
+        `checkpoint session exceeds ${MAX_CHECKPOINT_RECORDS} records`,
+      );
+    }
+    let sessionBytes = 0;
+    for (const blobFileName of allNames) {
+      const blobFilePath = path.join(directory, blobFileName);
+      try {
+        const blobStat = await stat(blobFilePath);
+        sessionBytes += blobStat.size;
+      } catch {
+        // Ignore missing blobs during counting
+      }
+    }
+    if (sessionBytes >= MAX_SESSION_CHECKPOINT_BYTES) {
+      throw new Error(
+        `checkpoint session exceeds ${MAX_SESSION_CHECKPOINT_BYTES} bytes total`,
+      );
     }
 
     const createdAt = new Date().toISOString();
