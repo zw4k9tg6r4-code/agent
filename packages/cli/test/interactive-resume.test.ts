@@ -72,6 +72,7 @@ describe("interactive mode", () => {
     expect(runner.turnOptions[1]).toEqual({
       kind: "continue",
       sessionId: "session-chat",
+      workspaceRoot: root,
       message: "explain the result",
       limits: {
         maxSteps: 30,
@@ -171,6 +172,7 @@ describe("resume", () => {
     expect(runner.turnOptions).toEqual([{
       kind: "resume",
       sessionId: "session-resume",
+      workspaceRoot: root,
       limits: {
         maxSteps: 30,
         maxContextTokens: 64_000,
@@ -233,6 +235,7 @@ describe("resume", () => {
     expect(runner.turnOptions).toEqual([{
       kind: "continue",
       sessionId: "session-ready",
+      workspaceRoot: root,
       message: "explain more",
       limits: {
         maxSteps: 30,
@@ -320,6 +323,7 @@ describe("resume", () => {
     expect(runner.turnOptions).toEqual([{
       kind: "resume",
       sessionId: "session-pending",
+      workspaceRoot: root,
       limits: {
         maxSteps: 30,
         maxContextTokens: 64_000,

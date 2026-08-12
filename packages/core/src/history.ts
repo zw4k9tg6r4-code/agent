@@ -167,9 +167,13 @@ export async function loadSessionSnapshot(
         );
       }
     } else if (event.type === "tool_requested") {
-      const state =
-        toolStates.get(event.call.id) ??
-        initialToolState(event.call, event.step);
+      const state = toolStates.get(event.call.id);
+      if (state === undefined) {
+        throw new SessionHistoryError(
+          "malformed_session",
+          `tool_requested event for unknown tool call ID: ${event.call.id}. It must precisely match a tool call from model_response_completed.`,
+        );
+      }
       state.call = event.call;
       state.step = event.step;
       state.requestRecorded = true;

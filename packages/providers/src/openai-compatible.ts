@@ -237,6 +237,17 @@ function parseUsage(value: unknown): TokenUsage | undefined {
   ) {
     return undefined;
   }
+  if (
+    !Number.isInteger(inputTokens) || inputTokens < 0 || inputTokens > 100_000_000 ||
+    !Number.isInteger(outputTokens) || outputTokens < 0 || outputTokens > 100_000_000 ||
+    !Number.isInteger(totalTokens) || totalTokens < 0 || totalTokens > 100_000_000
+  ) {
+    throw new OpenAICompatibleError(
+      "invalid_provider_response",
+      "Usage metrics must be non-negative integers up to 100,000,000.",
+      false
+    );
+  }
   return { inputTokens, outputTokens, totalTokens };
 }
 

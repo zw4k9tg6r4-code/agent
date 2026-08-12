@@ -1,19 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 
 import {
   isPermissionMode,
   type AgentRunLimits,
   type PermissionMode,
 } from "@agent/contracts";
+import { assertSafeRoot } from "./session-store.js";
 
 import { CliError, EXIT_CODES } from "./errors.js";
 
 export interface OpenAICompatibleConfig {
   readonly kind: "openai-compatible";
-  readonly baseUrl: string;
+  readonly profileId: string;
   readonly model: string;
-  readonly apiKeyEnv: string;
   readonly requestTimeoutMs: number;
   readonly maxRetries: number;
 }
@@ -30,9 +31,8 @@ export const DEFAULT_CONFIG: AgentConfig = {
   version: 1,
   provider: {
     kind: "openai-compatible",
-    baseUrl: "https://api.openai.com/v1",
+    profileId: "default",
     model: "gpt-4.1-mini",
-    apiKeyEnv: "OPENAI_API_KEY",
     requestTimeoutMs: 60_000,
     maxRetries: 2,
   },
@@ -155,9 +155,8 @@ export function parseAgentConfig(value: unknown): AgentConfig {
     version: 1,
     provider: {
       kind: "openai-compatible",
-      baseUrl: baseUrl(provider["baseUrl"]),
+      profileId: text(provider["profileId"], "provider.profileId"),
       model: text(provider["model"], "provider.model"),
-      apiKeyEnv: environmentName(provider["apiKeyEnv"]),
       requestTimeoutMs: positiveInteger(
         provider["requestTimeoutMs"],
         "provider.requestTimeoutMs",
@@ -184,7 +183,9 @@ export function parseAgentConfig(value: unknown): AgentConfig {
 export async function loadAgentConfig(
   workspaceRoot: string,
 ): Promise<AgentConfig> {
-  const path = join(workspaceRoot, ".agent", "config.json");
+  const agentDir = join(workspaceRoot, ".agent");
+  await assertSafeRoot(workspaceRoot, agentDir);
+  const path = join(agentDir, "config.json");
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
@@ -212,16 +213,74 @@ export async function loadAgentConfig(
   }
 }
 
+export interface ProviderProfile {
+  readonly baseUrl: string;
+  readonly apiKeyEnv: string;
+}
+
+export async function loadProviderProfile(
+  profileId: string,
+): Promise<ProviderProfile> {
+  const baseDir = process.env.AGENT_HOME ?? homedir();
+  const path = join(baseDir, ".gemini", "agent", "profiles.json");
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code: string }).code === "ENOENT"
+    ) {
+      throw new CliError(
+        "CONFIG_ERROR",
+        EXIT_CODES.usageOrConfig,
+        `missing ${path}; please configure your provider profiles`,
+      );
+    }
+    throw error;
+  }
+
+  let profiles: Record<string, unknown>;
+  try {
+    profiles = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `file is not valid JSON: ${path}`);
+  }
+
+  const profile = profiles[profileId];
+  if (typeof profile !== "object" || profile === null || Array.isArray(profile)) {
+    throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `profile "${profileId}" is not a valid object in ${path}`);
+  }
+  
+  const p = profile as Record<string, unknown>;
+  // We use text() to wrap error messages slightly differently here,
+  // but baseUrl() and environmentName() expect a generic config path.
+  // We can temporarily spoof the path string or just catch and wrap.
+  try {
+    return {
+      baseUrl: baseUrl(p["baseUrl"]),
+      apiKeyEnv: environmentName(p["apiKeyEnv"]),
+    };
+  } catch (error) {
+    if (error instanceof CliError) {
+      throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `Invalid profile "${profileId}": ${error.message}`);
+    }
+    throw error;
+  }
+}
+
 export function resolveApiKey(
-  config: AgentConfig,
+  profile: ProviderProfile,
   environment: Readonly<Record<string, string | undefined>>,
 ): string {
-  const value = environment[config.provider.apiKeyEnv]?.trim();
+  const value = environment[profile.apiKeyEnv]?.trim();
   if (value === undefined || value.length === 0) {
     throw new CliError(
       "CONFIG_ERROR",
       EXIT_CODES.usageOrConfig,
-      `missing API key: set environment variable ${config.provider.apiKeyEnv}`,
+      `missing API key: set environment variable ${profile.apiKeyEnv}`,
     );
   }
   return value;

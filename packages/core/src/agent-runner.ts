@@ -222,6 +222,12 @@ class DefaultAgentRunner implements AgentRunner {
         this.#dependencies.sessions,
         sessionId,
       );
+      if (priorSnapshot.workspaceRoot !== options.workspaceRoot) {
+        throw new AgentCoreError(
+          "workspace_mismatch",
+          `Session was started in a different workspace: ${priorSnapshot.workspaceRoot}`,
+        );
+      }
       workspaceRoot = priorSnapshot.workspaceRoot;
       permissionMode = priorSnapshot.permissionMode;
       if (options.kind === "continue") {

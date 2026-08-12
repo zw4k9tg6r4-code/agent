@@ -2,9 +2,11 @@ export { formatUsage, parseArgs, type CliCommand } from "./args.js";
 export {
   DEFAULT_CONFIG,
   loadAgentConfig,
+  loadProviderProfile,
   parseAgentConfig,
   resolveApiKey,
   type AgentConfig,
+  type ProviderProfile,
   type OpenAICompatibleConfig,
 } from "./config.js";
 export {

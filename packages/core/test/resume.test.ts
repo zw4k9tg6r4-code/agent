@@ -89,7 +89,7 @@ describe("resume turns", () => {
       },
     );
 
-    const result = await runner.runTurn({
+    const result = await runner.runTurn({ workspaceRoot: 'C:/workspace',
       kind: "resume",
       sessionId: "session-1",
       limits,
@@ -317,7 +317,7 @@ describe("resume turns", () => {
         },
       );
 
-      const result = await runner.runTurn({
+      const result = await runner.runTurn({ workspaceRoot: 'C:/workspace',
         kind: "resume",
         sessionId: "session-1",
         limits,
@@ -395,7 +395,7 @@ describe("resume turns", () => {
     );
 
     await expect(
-      runner.runTurn({
+      runner.runTurn({ workspaceRoot: 'C:/workspace',
         kind: "continue",
         sessionId: "session-1",
         message: "skip it",
@@ -475,7 +475,7 @@ describe("resume turns", () => {
       },
     );
 
-    const result = await runner.runTurn({
+    const result = await runner.runTurn({ workspaceRoot: 'C:/workspace',
       kind: "resume",
       sessionId: "session-1",
       limits,
@@ -533,7 +533,7 @@ describe("resume turns", () => {
       },
     );
 
-    const result = await runner.runTurn({
+    const result = await runner.runTurn({ workspaceRoot: 'C:/workspace',
       kind: "resume",
       sessionId: "session-1",
       limits,

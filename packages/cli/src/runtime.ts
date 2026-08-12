@@ -24,7 +24,7 @@ import type {
   Tool,
 } from "@agent/contracts";
 
-import type { AgentConfig } from "./config.js";
+import { loadProviderProfile, type AgentConfig } from "./config.js";
 
 export type { AgentCoreOptions } from "@agent/core";
 
@@ -83,10 +83,11 @@ export class ProductionRuntimeFactory implements CliRuntimeFactory {
   }
 
   async create(input: RuntimeFactoryInput): Promise<RuntimeBundle> {
+    const profile = await loadProviderProfile(input.config.provider.profileId);
     const provider = new this.#modules.OpenAICompatibleProvider({
-      baseUrl: input.config.provider.baseUrl,
+      baseUrl: profile.baseUrl,
       model: input.config.provider.model,
-      apiKeyEnvVar: input.config.provider.apiKeyEnv,
+      apiKeyEnvVar: profile.apiKeyEnv,
       requestTimeoutMs: input.config.provider.requestTimeoutMs,
       maxRetries: input.config.provider.maxRetries,
     });

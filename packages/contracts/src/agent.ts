@@ -33,6 +33,7 @@ export interface AgentContinueTurnOptions {
   readonly kind: "continue";
   readonly sessionId: string;
   readonly message: string;
+  readonly workspaceRoot: string;
   readonly limits: AgentRunLimits;
   readonly signal: AbortSignal;
   readonly token?: string;
@@ -41,6 +42,7 @@ export interface AgentContinueTurnOptions {
 export interface AgentResumeTurnOptions {
   readonly kind: "resume";
   readonly sessionId: string;
+  readonly workspaceRoot: string;
   readonly limits: AgentRunLimits;
   readonly signal: AbortSignal;
   readonly token?: string;

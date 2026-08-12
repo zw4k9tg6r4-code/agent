@@ -1,6 +1,7 @@
 import { formatUsage, type CliCommand } from "./args.js";
 import {
   loadAgentConfig,
+  loadProviderProfile,
   resolveApiKey,
   type AgentConfig,
 } from "./config.js";
@@ -31,7 +32,8 @@ async function createRuntime(
   context: CommandContext,
 ): Promise<{ readonly config: AgentConfig } & RuntimeBundle> {
   const config = await loadAgentConfig(context.workspaceRoot);
-  void resolveApiKey(config, context.environment);
+  const profile = await loadProviderProfile(config.provider.profileId);
+  void resolveApiKey(profile, context.environment);
   const bundle = await context.runtimeFactory.create({
     config,
     sessions: context.sessions,
@@ -196,6 +198,7 @@ async function interactiveLoop(
       const resumed = await loaded.runner.runTurn({
         kind: "resume",
         sessionId: item.sessionId,
+        workspaceRoot: context.workspaceRoot,
         limits: loaded.config.limits,
         signal: context.signal,
         ...(token !== undefined && { token }),
@@ -241,6 +244,7 @@ async function interactiveLoop(
           kind: "continue",
           sessionId,
           message,
+          workspaceRoot: context.workspaceRoot,
           limits: loaded.config.limits,
           signal: context.signal,
           ...(token !== undefined && { token }),

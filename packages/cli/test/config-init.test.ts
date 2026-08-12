@@ -87,10 +87,9 @@ describe("configuration and init", () => {
       timeoutMs: 300_000,
     });
     expect(config.skills).toEqual([]);
-    expect(resolveApiKey(config, {
-      OPENAI_API_KEY: "sk-test-secret",
-      OTHER_KEY: "not-used",
-    })).toBe("sk-test-secret");
+    expect(resolveApiKey({ baseUrl: "https://api.openai.com/v1", apiKeyEnv: "OPENAI_API_KEY" }, {
+      OPENAI_API_KEY: "sk-test",
+    })).toBe("sk-test");
   });
 
   it("rejects unknown permission modes with an actionable path", () => {
@@ -107,7 +106,7 @@ describe("configuration and init", () => {
   });
 
   it("reports the missing variable name without leaking values", () => {
-    expect(() => resolveApiKey(DEFAULT_CONFIG, {
+    expect(() => resolveApiKey({ baseUrl: "https://api.openai.com/v1", apiKeyEnv: "OPENAI_API_KEY" }, {
       OTHER_KEY: "sk-do-not-print",
     })).toThrowError(
       new CliError(
@@ -116,19 +115,5 @@ describe("configuration and init", () => {
         "missing API key: set environment variable OPENAI_API_KEY",
       ),
     );
-  });
-
-  it("rejects non-https and non-loopback URLs", () => {
-    expect(() => parseAgentConfig({
-      ...DEFAULT_CONFIG,
-      provider: { ...DEFAULT_CONFIG.provider, baseUrl: "http://attacker.com/v1" },
-    })).toThrowError(/provider.baseUrl must use https:\/\/ or loopback http:\/\//);
-  });
-
-  it("rejects unlisted environment variables", () => {
-    expect(() => parseAgentConfig({
-      ...DEFAULT_CONFIG,
-      provider: { ...DEFAULT_CONFIG.provider, apiKeyEnv: "AWS_SECRET_ACCESS_KEY" },
-    })).toThrowError(/is not in the trusted whitelist/);
   });
 });

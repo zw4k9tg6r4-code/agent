@@ -16,7 +16,7 @@ describe("examples", () => {
     const raw = await example("config.json");
     const config = parseAgentConfig(JSON.parse(raw) as unknown);
 
-    expect(config.provider.apiKeyEnv).toBe("OPENAI_API_KEY");
+    expect(config.provider.profileId).toBe("default");
     expect(config.skills).toEqual(["review"]);
     expect(raw).not.toMatch(/sk-[A-Za-z0-9]/u);
   });

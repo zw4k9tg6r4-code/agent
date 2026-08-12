@@ -792,16 +792,21 @@ export class JsonlSessionEventStore implements SessionEventStore {
   }
 
   async get(sessionId: string): Promise<SessionListItem | undefined> {
+    assertSessionId(sessionId);
+    await assertSafeRoot(dirname(dirname(this.#root)), this.#root);
     const events = await this.#readComplete(sessionId, true);
     return events.length === 0 ? undefined : this.#summarize(sessionId, events);
   }
 
   async *read(sessionId: string): AsyncIterable<SessionEvent> {
+    assertSessionId(sessionId);
+    await assertSafeRoot(dirname(dirname(this.#root)), this.#root);
     const events = await this.#readComplete(sessionId, false);
     for (const event of events) yield event;
   }
 
   async list(): Promise<readonly SessionListItem[]> {
+    await assertSafeRoot(dirname(dirname(this.#root)), this.#root);
     let names: readonly string[];
     try {
       names = await readdir(this.#root);
@@ -822,6 +827,8 @@ export class JsonlSessionEventStore implements SessionEventStore {
   }
 
   async details(sessionId: string): Promise<SessionDetails> {
+    assertSessionId(sessionId);
+    await assertSafeRoot(dirname(dirname(this.#root)), this.#root);
     const events = await this.#readComplete(sessionId, false);
     const item = this.#summarize(sessionId, events);
     const first = events[0];
