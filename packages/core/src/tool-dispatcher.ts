@@ -11,6 +11,7 @@ import type {
   ToolResult,
 } from "@agent/contracts";
 
+import { AgentCoreError } from "./agent-runner.js";
 import type { PendingToolState } from "./history.js";
 import { sanitizeToolResult } from "./redaction.js";
 import { Buffer } from "node:buffer";

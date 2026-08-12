@@ -23,12 +23,32 @@ import {
   type ProcessRiskAnalysis,
 } from "./process-risk.js";
 
-const EXPECTED_RISK: Readonly<Record<string, RiskLevel>> = {
-  file_read: "read",
-  file_search: "read",
-  file_patch: "write",
-  shell_execute: "execute",
-};
+export interface PermissionContext {
+  readonly resolveExecutable: ExecutableResolver;
+}
+
+export interface ToolStrategy {
+  readonly expectedRisk: RiskLevel;
+  evaluate(
+    request: PermissionRequest,
+    context: PermissionContext,
+  ): Promise<PermissionDecision>;
+}
+
+export interface DefaultPermissionEvaluatorOptions {
+  readonly resolveExecutable?: ExecutableResolver;
+  readonly strategies?: ReadonlyMap<string, ToolStrategy>;
+}
+
+const BUILTIN_STRATEGIES = new Map<string, ToolStrategy>([
+  ["file_read", { expectedRisk: "read", evaluate: async (req) => evaluateFileRequest(req) }],
+  ["file_search", { expectedRisk: "read", evaluate: async (req) => evaluateFileRequest(req) }],
+  ["file_patch", { expectedRisk: "write", evaluate: async (req) => evaluateFileRequest(req) }],
+  ["shell_execute", { 
+    expectedRisk: "execute", 
+    evaluate: async (req, ctx) => evaluateProcessRequest(req, ctx.resolveExecutable) 
+  }],
+]);
 
 function deny(ruleId: string, reason: string): PermissionDecision {
   return {
@@ -325,10 +345,12 @@ async function evaluateProcessRequest(
 
 export class DefaultPermissionEvaluator implements PermissionEvaluator {
   readonly #resolveExecutable: ExecutableResolver;
+  readonly #strategies: ReadonlyMap<string, ToolStrategy>;
 
   constructor(options: DefaultPermissionEvaluatorOptions = {}) {
     this.#resolveExecutable =
       options.resolveExecutable ?? resolveNativeExecutable;
+    this.#strategies = options.strategies ?? BUILTIN_STRATEGIES;
   }
 
   async evaluate(
@@ -340,18 +362,18 @@ export class DefaultPermissionEvaluator implements PermissionEvaluator {
         "tool call name does not match its definition",
       );
     }
-    const expectedRisk = EXPECTED_RISK[request.call.name];
-    if (expectedRisk === undefined) {
-      return deny("tool.unknown", "tool is not a built-in MVP tool");
+    const strategy = this.#strategies.get(request.call.name);
+    if (strategy === undefined) {
+      return deny("tool.unknown", "tool is not registered in the strategy registry");
     }
-    if (request.tool.riskLevel !== expectedRisk) {
+    if (request.tool.riskLevel !== strategy.expectedRisk) {
       return deny(
         "tool.definition_mismatch",
-        "tool risk level does not match the frozen built-in definition",
+        "tool risk level does not match the registered strategy",
       );
     }
-    return request.call.name === "shell_execute"
-      ? evaluateProcessRequest(request, this.#resolveExecutable)
-      : evaluateFileRequest(request);
+    return strategy.evaluate(request, {
+      resolveExecutable: this.#resolveExecutable,
+    });
   }
 }

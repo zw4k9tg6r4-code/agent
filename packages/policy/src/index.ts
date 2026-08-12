@@ -6,4 +6,6 @@ export {
 export {
   DefaultPermissionEvaluator,
   type DefaultPermissionEvaluatorOptions,
+  type PermissionContext,
+  type ToolStrategy,
 } from "./default-permission-evaluator.js";

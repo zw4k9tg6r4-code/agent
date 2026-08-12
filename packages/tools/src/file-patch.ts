@@ -349,7 +349,7 @@ export async function runFilePatch(
       await writeFileAtomic(finalTarget.absolutePath, next, {
         ...(mode === undefined ? {} : { mode }),
         signal: context.signal,
-        expectedSha256: originalSha256 ?? undefined,
+        ...(typeof originalSha256 === "string" ? { expectedSha256: originalSha256 } : {}),
       });
     }
 
