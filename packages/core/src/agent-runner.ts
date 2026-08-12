@@ -386,6 +386,11 @@ class DefaultAgentRunner implements AgentRunner {
           this.#dependencies.sessions,
           sessionId,
         );
+        await this.#dependencies.sessions.append(sessionId, {
+          type: "turn_cancelled",
+          turnId,
+          reason,
+        }, options.token);
         return resultError(
           sessionId,
           turnId,

@@ -185,6 +185,7 @@ describe("resume", () => {
     expect(runner.finishOptions).toEqual([{
       sessionId: "session-resume",
       signal,
+      token: expect.any(String),
     }]);
   });
 
@@ -249,6 +250,7 @@ describe("resume", () => {
     expect(runner.finishOptions).toEqual([{
       sessionId: "session-ready",
       signal,
+      token: expect.any(String),
     }]);
   });
 

@@ -46,9 +46,10 @@ async function finish(
   sessionId: string,
   runner: RuntimeBundle["runner"],
   context: CommandContext,
+  token?: string,
 ): Promise<ExitCode> {
   return reportFinished(
-    await runner.finishSession({ sessionId, signal: context.signal }),
+    await runner.finishSession({ sessionId, signal: context.signal, ...(token !== undefined && { token }) }),
     context.io,
   );
 }
@@ -224,7 +225,7 @@ async function interactiveLoop(
       if (sessionId === undefined || loaded === undefined) {
         return EXIT_CODES.success;
       }
-      return finish(sessionId, loaded.runner, context);
+      return finish(sessionId, loaded.runner, context, token);
     }
 
     const message = input.trim();
