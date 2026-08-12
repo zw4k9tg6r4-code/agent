@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  link,
   lstat,
   mkdir,
   open,
@@ -8,6 +9,8 @@ import {
   realpath,
   stat,
   unlink,
+  rename,
+  writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -816,13 +819,16 @@ export class JsonlSessionEventStore implements SessionEventStore {
       }
       throw error;
     }
-    const items = await Promise.all(
-      names
-        .filter((name) => name.endsWith(".jsonl"))
-        .map(async (name) => this.get(name.slice(0, -6))),
-    );
+    const items: SessionListItem[] = [];
+    for (const name of names) {
+      if (name.endsWith(".jsonl")) {
+        const item = await this.get(name.slice(0, -6));
+        if (item !== undefined) {
+          items.push(item);
+        }
+      }
+    }
     return items
-      .filter((item): item is SessionListItem => item !== undefined)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
@@ -936,7 +942,20 @@ export class JsonlSessionEventStore implements SessionEventStore {
     assertSessionId(sessionId);
     let raw: Buffer;
     try {
-      raw = await readFile(this.#path(sessionId));
+      const p = this.#path(sessionId);
+      const st = await stat(p).catch((err) => {
+        if (hasCode(err, "ENOENT")) return null;
+        throw err;
+      });
+      if (st === null) {
+        const err = new Error("ENOENT");
+        (err as any).code = "ENOENT";
+        throw err;
+      }
+      if (st.size > 100_000_000) {
+        throw new CliError("DATA_ERROR", EXIT_CODES.runtimeFailure, `session file exceeds 100MB limit: ${sessionId}`);
+      }
+      raw = await readFile(p);
     } catch (error) {
       if (hasCode(error, "ENOENT")) {
         if (allowMissing) {
@@ -1025,17 +1044,15 @@ export class JsonlSessionEventStore implements SessionEventStore {
     const deadline = Date.now() + this.#lockWaitMs;
     while (true) {
       const lock: LockRecord = { pid: process.pid, token: randomUUID() };
+      const tempPath = `${path}.${lock.token}.tmp`;
       try {
-        const handle = await open(path, "wx", 0o600);
-        try {
-          await handle.writeFile(`${JSON.stringify(lock)}\n`, "utf8");
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+        await writeFile(tempPath, `${JSON.stringify(lock)}\n`, { mode: 0o600, encoding: "utf8" });
+        await link(tempPath, path);
         return lock;
       } catch (error) {
         if (!hasCode(error, "EEXIST")) throw error;
+      } finally {
+        await unlink(tempPath).catch(() => {});
       }
 
       if (await this.#removeDeadLock(path)) continue;
@@ -1051,38 +1068,53 @@ export class JsonlSessionEventStore implements SessionEventStore {
   }
 
   async #removeDeadLock(path: string): Promise<boolean> {
-    let value: unknown;
+    const tempPath = `${path}.${randomUUID()}.tmp`;
     try {
-      value = JSON.parse(await readFile(path, "utf8")) as unknown;
+      await rename(path, tempPath);
     } catch (error) {
       if (hasCode(error, "ENOENT")) return true;
-      const details = await stat(path);
-      if (Date.now() - details.mtimeMs < this.#lockWaitMs) return false;
-      await unlink(path).catch((unlinkError: unknown) => {
-        if (!hasCode(unlinkError, "ENOENT")) throw unlinkError;
-      });
+      throw error;
+    }
+
+    let value: unknown;
+    try {
+      value = JSON.parse(await readFile(tempPath, "utf8")) as unknown;
+    } catch (error) {
+      await unlink(tempPath).catch(() => {});
       return true;
     }
+
     if (
       record(value)
       && Number.isInteger(value["pid"])
       && processIsAlive(value["pid"] as number)
     ) {
+      try {
+        await link(tempPath, path);
+      } catch (linkError) {
+        // Someone else grabbed the lock in the meantime, their lock wins.
+      }
+      await unlink(tempPath).catch(() => {});
       return false;
     }
-    await unlink(path).catch((error: unknown) => {
-      if (!hasCode(error, "ENOENT")) throw error;
-    });
+
+    await unlink(tempPath).catch(() => {});
     return true;
   }
 
   async #releaseLock(path: string, token: string): Promise<void> {
+    const tempPath = `${path}.${randomUUID()}.tmp`;
     try {
-      const value = JSON.parse(await readFile(path, "utf8")) as unknown;
-      if (!record(value) || value["token"] !== token) return;
-      await unlink(path);
+      await rename(path, tempPath);
+      const value = JSON.parse(await readFile(tempPath, "utf8")) as unknown;
+      if (!record(value) || value["token"] !== token) {
+        // Not our lock! Put it back.
+        await link(tempPath, path).catch(() => {});
+      }
+      await unlink(tempPath).catch(() => {});
     } catch (error) {
-      if (!hasCode(error, "ENOENT")) throw error;
+      if (hasCode(error, "ENOENT")) return;
+      throw error;
     }
   }
 

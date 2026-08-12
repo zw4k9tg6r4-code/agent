@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { workspaceLock } from "./mutex.js";
 
 import type {
   JsonObject,
@@ -170,6 +171,7 @@ export async function runFilePatch(
   call: ToolCall,
   context: ToolExecutionContext,
 ): Promise<ToolResult> {
+  const release = await workspaceLock.acquire();
   try {
     if (context.signal.aborted) {
       return toolFailure(call, "CANCELLED", "file patch was cancelled");
@@ -380,5 +382,7 @@ export async function runFilePatch(
     const message =
       error instanceof Error ? error.message : "unknown file patch failure";
     return toolFailure(call, "FILE_PATCH_FAILED", message);
+  } finally {
+    release();
   }
 }

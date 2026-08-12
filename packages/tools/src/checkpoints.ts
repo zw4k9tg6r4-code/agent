@@ -347,21 +347,20 @@ async function readRecords(
       `checkpoint session exceeds ${MAX_CHECKPOINT_RECORDS} records`,
     );
   }
-  const records = await Promise.all(
-    names.map(async (name) => {
-      const record = parseRecord(
-        await readBoundedText(
-          path.join(directory, name),
-          MAX_CHECKPOINT_RECORD_BYTES,
-          signal,
-        ),
-      );
-      if (name !== `${recordStem(record.relativePath)}.json`) {
-        throw new Error("checkpoint record filename does not match its path");
-      }
-      return record;
-    }),
-  );
+  const records: CheckpointRecord[] = [];
+  for (const name of names) {
+    const record = parseRecord(
+      await readBoundedText(
+        path.join(directory, name),
+        MAX_CHECKPOINT_RECORD_BYTES,
+        signal,
+      ),
+    );
+    if (name !== `${recordStem(record.relativePath)}.json`) {
+      throw new Error("checkpoint record filename does not match its path");
+    }
+    records.push(record);
+  }
   records.sort((left, right) =>
     left.relativePath.localeCompare(right.relativePath, "en"),
   );

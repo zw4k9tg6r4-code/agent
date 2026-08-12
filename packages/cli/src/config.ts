@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -126,6 +126,9 @@ function skillNames(value: unknown): readonly string[] {
   if (!Array.isArray(value)) {
     throw configError("skills must be an array of names");
   }
+  if (value.length > 50) {
+    throw configError("skills array length exceeds maximum limit of 50");
+  }
   return value.map((entry, index) => {
     const name = text(entry, `skills[${index}]`);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(name)) {
@@ -151,6 +154,23 @@ export function parseAgentConfig(value: unknown): AgentConfig {
     );
   }
   const limits = record(root["limits"], "limits");
+  const parsedLimits = {
+    maxSteps: positiveInteger(limits["maxSteps"], "limits.maxSteps"),
+    maxContextTokens: positiveInteger(
+      limits["maxContextTokens"],
+      "limits.maxContextTokens",
+    ),
+    maxOutputTokens: positiveInteger(
+      limits["maxOutputTokens"],
+      "limits.maxOutputTokens",
+    ),
+    timeoutMs: positiveInteger(limits["timeoutMs"], "limits.timeoutMs"),
+  };
+  if (parsedLimits.maxSteps > 10_000) throw configError("limits.maxSteps must not exceed 10,000");
+  if (parsedLimits.maxContextTokens > 2_000_000) throw configError("limits.maxContextTokens must not exceed 2,000,000");
+  if (parsedLimits.maxOutputTokens > 200_000) throw configError("limits.maxOutputTokens must not exceed 200,000");
+  if (parsedLimits.timeoutMs > 86_400_000) throw configError("limits.timeoutMs must not exceed 86,400,000");
+
   return {
     version: 1,
     provider: {
@@ -164,18 +184,7 @@ export function parseAgentConfig(value: unknown): AgentConfig {
       maxRetries: retryCount(provider["maxRetries"]),
     },
     permissionMode: mode,
-    limits: {
-      maxSteps: positiveInteger(limits["maxSteps"], "limits.maxSteps"),
-      maxContextTokens: positiveInteger(
-        limits["maxContextTokens"],
-        "limits.maxContextTokens",
-      ),
-      maxOutputTokens: positiveInteger(
-        limits["maxOutputTokens"],
-        "limits.maxOutputTokens",
-      ),
-      timeoutMs: positiveInteger(limits["timeoutMs"], "limits.timeoutMs"),
-    },
+    limits: parsedLimits,
     skills: skillNames(root["skills"]),
   };
 }
@@ -188,6 +197,10 @@ export async function loadAgentConfig(
   const path = join(agentDir, "config.json");
   let raw: string;
   try {
+    const st = await stat(path);
+    if (st.size > 1_000_000) {
+      throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `config file exceeds 1MB limit: ${path}`);
+    }
     raw = await readFile(path, "utf8");
   } catch (error) {
     if (
@@ -221,10 +234,14 @@ export interface ProviderProfile {
 export async function loadProviderProfile(
   profileId: string,
 ): Promise<ProviderProfile> {
-  const baseDir = process.env.AGENT_HOME ?? homedir();
+  const baseDir = (process.env["AGENT_HOME"] ?? homedir());
   const path = join(baseDir, ".gemini", "agent", "profiles.json");
   let raw: string;
   try {
+    const st = await stat(path);
+    if (st.size > 1_000_000) {
+      throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `profiles file exceeds 1MB limit: ${path}`);
+    }
     raw = await readFile(path, "utf8");
   } catch (error) {
     if (

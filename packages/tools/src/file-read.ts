@@ -1,4 +1,5 @@
 import { stat, readFile } from "node:fs/promises";
+import { workspaceLock } from "./mutex.js";
 
 import type {
   JsonObject,
@@ -86,70 +87,76 @@ export async function runFileRead(
         "Agent metadata and Git internals cannot be read",
       );
     }
-    const details = await stat(resolved.absolutePath);
-    if (!details.isFile()) {
-      return toolFailure(
-        call,
-        "NOT_A_FILE",
-        "path must resolve to a file",
-      );
-    }
-    if (details.size > MAX_SOURCE_FILE_BYTES) {
-      return toolFailure(
-        call,
-        "FILE_TOO_LARGE",
-        `file exceeds ${MAX_SOURCE_FILE_BYTES} bytes`,
-      );
-    }
-
-    const bytes = await readFile(resolved.absolutePath, {
-      signal: context.signal,
-    });
-    if (bytes.includes(0)) {
-      return toolFailure(
-        call,
-        "BINARY_FILE",
-        "binary files are not available through file_read",
-      );
-    }
-
-    let text: string;
+    const release = await workspaceLock.acquire();
     try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      return toolFailure(
-        call,
-        "INVALID_UTF8",
-        "file_read accepts UTF-8 text files only",
+      const details = await stat(resolved.absolutePath);
+      if (!details.isFile()) {
+        return toolFailure(
+          call,
+          "NOT_A_FILE",
+          "path must resolve to a file",
+        );
+      }
+      if (details.size > MAX_SOURCE_FILE_BYTES) {
+        return toolFailure(
+          call,
+          "FILE_TOO_LARGE",
+          `file exceeds ${MAX_SOURCE_FILE_BYTES} bytes`,
+        );
+      }
+
+      const bytes = await readFile(resolved.absolutePath, {
+        signal: context.signal,
+      });
+
+      if (bytes.includes(0)) {
+        return toolFailure(
+          call,
+          "BINARY_FILE",
+          "binary files are not available through file_read",
+        );
+      }
+
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        return toolFailure(
+          call,
+          "INVALID_UTF8",
+          "file_read accepts UTF-8 text files only",
+        );
+      }
+
+      const lines = text.replace(/\r\n/gu, "\n").split("\n");
+      if (lines.at(-1) === "") {
+        lines.pop();
+      }
+      const effectiveEnd = Math.min(
+        requestedEndLine ?? lines.length,
+        lines.length,
       );
-    }
+      const selected =
+        startLine > lines.length
+          ? ""
+          : lines.slice(startLine - 1, effectiveEnd).join("\n");
+      const bounded = truncateUtf8(selected, FILE_READ_OUTPUT_LIMIT_BYTES);
 
-    const lines = text.replace(/\r\n/gu, "\n").split("\n");
-    if (lines.at(-1) === "") {
-      lines.pop();
+      return toolSuccess(
+        call,
+        bounded.output,
+        {
+          path: resolved.relativePath,
+          bytes: details.size,
+          startLine,
+          endLine: effectiveEnd,
+          truncated: bounded.truncated,
+          originalOutputBytes: bounded.originalBytes,
+        },
+      );
+    } finally {
+      release();
     }
-    const effectiveEnd = Math.min(
-      requestedEndLine ?? lines.length,
-      lines.length,
-    );
-    const selected =
-      startLine > lines.length
-        ? ""
-        : lines.slice(startLine - 1, effectiveEnd).join("\n");
-    const bounded = truncateUtf8(selected, FILE_READ_OUTPUT_LIMIT_BYTES);
-
-    return toolSuccess(
-      call,
-      bounded.output,
-      {
-        path: resolved.relativePath,
-        bytes: details.size,
-        startLine,
-        endLine: effectiveEnd,
-        truncated: bounded.truncated,
-        originalOutputBytes: bounded.originalBytes,
-      },
-    );
   } catch (error: unknown) {
     if (error instanceof WorkspacePathError) {
       return pathFailure(call, error);

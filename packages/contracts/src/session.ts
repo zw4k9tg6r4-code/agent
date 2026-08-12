@@ -116,6 +116,11 @@ export type SessionEventData =
       readonly usage: TokenUsage;
     }
   | {
+      readonly type: "turn_cancelled";
+      readonly turnId: string;
+      readonly reason: string;
+    }
+  | {
       readonly type: "turn_failed";
       readonly turnId: string;
       readonly code: string;

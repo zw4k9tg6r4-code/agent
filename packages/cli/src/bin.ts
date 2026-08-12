@@ -30,8 +30,9 @@ export interface ExecuteCliContext {
   readonly version: string;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function sanitizeErrorMessage(error: unknown, workspaceRoot: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replaceAll(workspaceRoot, "<workspace>");
 }
 
 export async function executeCli(
@@ -53,7 +54,7 @@ export async function executeCli(
     });
   } catch (error) {
     if (error instanceof CliError) {
-      context.io.writeError(`${error.message}\n`);
+      context.io.writeError(`${sanitizeErrorMessage(error, context.workspaceRoot)}\n`);
       return error.exitCode;
     }
     if (
@@ -63,7 +64,7 @@ export async function executeCli(
       context.io.writeError("Task cancelled.\n");
       return EXIT_CODES.cancelled;
     }
-    context.io.writeError(`Unexpected error: ${errorMessage(error)}\n`);
+    context.io.writeError(`Unexpected error: ${sanitizeErrorMessage(error, context.workspaceRoot)}\n`);
     return EXIT_CODES.runtimeFailure;
   } finally {
     interrupt.dispose();

@@ -61,7 +61,8 @@ describe("session and Agent contracts", () => {
     const options: AgentTurnOptions = {
       kind: "continue",
       sessionId: "session-1",
-      message: "continue",
+      workspaceRoot: "fake-workspace",
+      message: "next move",
       limits: {
         maxSteps: 30,
         maxContextTokens: 64_000,

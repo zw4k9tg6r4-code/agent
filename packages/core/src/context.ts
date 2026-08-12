@@ -1,4 +1,4 @@
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import type { ModelMessage } from "@agent/contracts";
@@ -92,6 +92,10 @@ async function resolveContainedFile(
       "context_path_escape",
       `Context file resolves outside its allowed boundary: ${candidate}`,
     );
+  }
+  const st = await stat(canonical);
+  if (st.size > 2_000_000) {
+    throw new ContextError("context_too_large", `Context file exceeds 2MB limit: ${candidate}`);
   }
   return readFile(canonical, "utf8");
 }
