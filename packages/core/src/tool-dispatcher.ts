@@ -207,7 +207,14 @@ export async function dispatchToolCall(
   }
 
   result = sanitizeToolResult(result);
-  
+
+  if (!result.ok && result.error.code === "PROCESS_TERMINATION_FAILED") {
+    throw new AgentCoreError(
+      "process_termination_failed",
+      "process tree did not terminate within the bounded kill deadline",
+    );
+  }
+
   if (result.ok) {
     const outputBytes = Buffer.byteLength(result.output, "utf8");
     if (outputBytes > tool.definition.outputLimitBytes) {

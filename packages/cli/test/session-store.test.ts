@@ -416,7 +416,7 @@ describe("JsonlSessionEventStore", () => {
     const agentDir = join(workspaceRoot, ".agent");
     await mkdir(agentDir);
     await symlink(outside, join(agentDir, "sessions"), process.platform === "win32" ? "junction" : "dir");
-    
+
     const store = new JsonlSessionEventStore(join(agentDir, "sessions"));
     await expect(store.append("session-1", {
       type: "session_started",
@@ -426,4 +426,3 @@ describe("JsonlSessionEventStore", () => {
     })).rejects.toThrow(/must not be a symbolic link|must not be a reparse point/);
   });
 });
-

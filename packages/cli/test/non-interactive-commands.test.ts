@@ -91,6 +91,12 @@ describe("non-interactive commands", () => {
     message,
   ) => {
     const { root, sessions } = await setup();
+    await sessions.append("session-fake", {
+      type: "session_started",
+      task: "inspect",
+      workspaceRoot: root,
+      permissionMode: "workspace",
+    });
     const io = new FakeIO();
     const runner = new FakeRunner([erroredTurn(status)]);
     const code = await runNonInteractiveCommand(
@@ -170,6 +176,7 @@ describe("non-interactive commands", () => {
       sessionId: "session-undo",
       workspaceRoot: root,
       signal,
+      expectedHashes: new Map(),
     }]);
     expect(io.output.join("")).toContain("Restored: src/app.ts");
     expect(io.output.join("")).toContain("Removed: src/generated.ts");

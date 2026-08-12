@@ -96,6 +96,14 @@ describe("executeCli", () => {
   it("maps Ctrl+C during a turn to 130", async () => {
     const workspaceRoot = await root();
     await initializeWorkspace(workspaceRoot);
+    const { JsonlSessionEventStore } = await import("../src/index.js");
+    const sessions = new JsonlSessionEventStore(join(workspaceRoot, ".agent", "sessions"));
+    await sessions.append("session-fake", {
+      type: "session_started",
+      task: "wait",
+      workspaceRoot,
+      permissionMode: "workspace",
+    });
     const io = new FakeIO();
     const signal = signals();
     const runner: AgentRunner = {

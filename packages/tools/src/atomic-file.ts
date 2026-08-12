@@ -4,7 +4,7 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 export async function writeFileAtomic(
@@ -13,6 +13,7 @@ export async function writeFileAtomic(
   options: {
     readonly mode?: number;
     readonly signal: AbortSignal;
+    readonly expectedSha256?: string;
   },
 ): Promise<void> {
   if (options.signal.aborted) {
@@ -35,10 +36,23 @@ export async function writeFileAtomic(
     if (options.signal.aborted) {
       throw new DOMException("write cancelled", "AbortError");
     }
-    // The requested mode was applied when the temporary file was opened.
-    // Rename is the commit point; no fallible operation may turn a committed
-    // write into a reported failure.
-    await rename(temporaryPath, absolutePath);
+    if (options.expectedSha256 !== undefined) {
+      let currentHandle: Awaited<ReturnType<typeof open>> | undefined;
+      try {
+        currentHandle = await open(absolutePath, "r");
+        const current = await currentHandle.readFile();
+        if (createHash("sha256").update(current).digest("hex") !== options.expectedSha256) {
+          throw new Error("checkpoint checksum failed during atomic write");
+        }
+        await currentHandle.close();
+        currentHandle = undefined;
+        await rename(temporaryPath, absolutePath);
+      } finally {
+        await currentHandle?.close();
+      }
+    } else {
+      await rename(temporaryPath, absolutePath);
+    }
   } catch (error: unknown) {
     await handle?.close().catch(() => undefined);
     await rm(temporaryPath, { force: true }).catch(() => undefined);

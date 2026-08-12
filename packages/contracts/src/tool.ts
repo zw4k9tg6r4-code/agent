@@ -60,6 +60,7 @@ export interface CheckpointRestoreRequest {
   readonly sessionId: string;
   readonly workspaceRoot: string;
   readonly signal: AbortSignal;
+  readonly expectedHashes?: ReadonlyMap<string, string | null>;
 }
 
 export interface CheckpointRestoreResult {

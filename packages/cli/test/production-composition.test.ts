@@ -151,14 +151,14 @@ describe("real production composition", () => {
 
       expect(code).toBe(EXIT_CODES.runtimeFailure);
       const [item] = await sessions.list();
-      expect(item?.state).toBe("running");
+      expect(item?.state).toBe("failed");
       const events: SessionEvent[] = [];
       if (item !== undefined) {
         for await (const event of sessions.read(item.sessionId)) {
           events.push(event);
         }
       }
-      expect(events.at(-1)?.type).toBe("turn_failed");
+      expect(events.at(-1)?.type).toBe("session_failed");
       expect(events.some((event) => event.type === "session_completed")).toBe(
         false,
       );

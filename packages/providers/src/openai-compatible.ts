@@ -283,6 +283,7 @@ function stopReason(value: string): ModelStopReason {
 function collectToolFragments(
   value: unknown,
   calls: Map<number, MutableToolCall>,
+  state: { argumentsBytes: number },
 ): void {
   if (!Array.isArray(value)) {
     return;
@@ -298,16 +299,23 @@ function collectToolFragments(
     }
     if (typeof fragment["id"] === "string") {
       existing.id += fragment["id"];
+      if (existing.id.length > 256) {
+        throw new OpenAICompatibleError("tool_id_too_large", "Tool ID exceeded maximum length.", false);
+      }
     }
     const fn = fragment["function"];
     if (isRecord(fn)) {
       if (typeof fn["name"] === "string") {
         existing.name += fn["name"];
+        if (existing.name.length > 256) {
+          throw new OpenAICompatibleError("tool_name_too_large", "Tool name exceeded maximum length.", false);
+        }
       }
       if (typeof fn["arguments"] === "string") {
         existing.arguments += fn["arguments"];
-        if (existing.arguments.length > 5_000_000) {
-          throw new OpenAICompatibleError("arguments_too_large", "Tool arguments exceeded maximum length.", false);
+        state.argumentsBytes += fn["arguments"].length;
+        if (state.argumentsBytes > 5_000_000) {
+          throw new OpenAICompatibleError("arguments_too_large", "Aggregate tool arguments exceeded maximum length.", false);
         }
       }
     }
@@ -339,7 +347,25 @@ async function httpError(
   apiKeyEnvVar: string,
   apiKey: string,
 ): Promise<OpenAICompatibleError> {
-  const text = (await response.text()).slice(0, 4_096);
+  let text = "";
+  if (response.body) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (text.length < 4_096) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch {
+      // Ignore stream errors during error reading
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+    text = text.slice(0, 4_096);
+  } else {
+    text = (await response.text()).slice(0, 4_096);
+  }
   let providerMessage = "";
   try {
     const parsed: unknown = JSON.parse(text);
@@ -433,15 +459,15 @@ async function defaultSleep(
       reject(signal.reason);
       return;
     }
-    const timer = setTimeout(resolve, milliseconds);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
+    const abortHandler = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abortHandler, { once: true });
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abortHandler);
+      resolve();
+    }, milliseconds);
   });
 }
 
@@ -585,10 +611,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
       }
 
       const calls = new Map<number, MutableToolCall>();
+      const state = { argumentsBytes: 0, textBytes: 0, frames: 0 };
       let usage: TokenUsage | undefined;
       let completed: ModelStopReason | undefined;
       try {
         for await (const data of decodeSseData(response.body)) {
+          state.frames += 1;
+          if (state.frames > 20_000) {
+            throw new OpenAICompatibleError("response_too_large", "Exceeded maximum allowed SSE frames.", false);
+          }
           if (data === "[DONE]") {
             break;
           }
@@ -636,9 +667,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
             const delta = choice["delta"];
             if (isRecord(delta)) {
               if (typeof delta["content"] === "string") {
+                state.textBytes += delta["content"].length;
+                if (state.textBytes > 5_000_000) {
+                  throw new OpenAICompatibleError("text_too_large", "Aggregate text exceeded maximum length.", false);
+                }
                 yield { type: "text_delta", delta: delta["content"] };
               }
-              collectToolFragments(delta["tool_calls"], calls);
+              collectToolFragments(delta["tool_calls"], calls, state);
             }
             if (typeof choice["finish_reason"] === "string") {
               completed = stopReason(choice["finish_reason"]);

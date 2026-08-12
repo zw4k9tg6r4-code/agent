@@ -527,6 +527,22 @@ export class FileCheckpointStore implements CheckpointStore {
         ) {
           throw new Error("checkpoint blob metadata is missing");
         }
+
+        if (request.expectedHashes !== undefined) {
+          const expectedSha256 = request.expectedHashes.get(record.relativePath);
+          if (expectedSha256 !== undefined) {
+             if (target.exists) {
+                const currentBytes = await readFile(target.absolutePath, { signal: request.signal });
+                const currentSha256 = createHash("sha256").update(currentBytes).digest("hex");
+                if (currentSha256 !== expectedSha256) {
+                   throw new Error(`checkpoint CAS failed: ${record.relativePath} was modified after capture`);
+                }
+             } else if (expectedSha256 !== null) {
+                throw new Error(`checkpoint CAS failed: ${record.relativePath} was deleted after capture`);
+             }
+          }
+        }
+
         const content = Buffer.from(blob.contentBase64, "base64");
         const digest = createHash("sha256").update(content).digest("hex");
         if (digest !== record.sha256) {
@@ -538,6 +554,20 @@ export class FileCheckpointStore implements CheckpointStore {
         });
         restoredPaths.push(record.relativePath);
       } else {
+        if (request.expectedHashes !== undefined) {
+          const expectedSha256 = request.expectedHashes.get(record.relativePath);
+          if (expectedSha256 !== undefined) {
+             if (target.exists) {
+                const currentBytes = await readFile(target.absolutePath, { signal: request.signal });
+                const currentSha256 = createHash("sha256").update(currentBytes).digest("hex");
+                if (currentSha256 !== expectedSha256) {
+                   throw new Error(`checkpoint CAS failed: ${record.relativePath} was modified after capture`);
+                }
+             } else if (expectedSha256 !== null) {
+                throw new Error(`checkpoint CAS failed: ${record.relativePath} was deleted after capture`);
+             }
+          }
+        }
         await rm(target.absolutePath, { force: true });
         removedPaths.push(record.relativePath);
       }

@@ -65,7 +65,15 @@ async function runOneShot(
     signal: context.signal,
   });
   const code = reportTurn(turn, context.io);
-  return code ?? finish(turn.sessionId, runner, context);
+  if (code !== null) {
+    const type = code === EXIT_CODES.cancelled ? "session_cancelled" : "session_failed";
+    await context.sessions.append(turn.sessionId, type === "session_failed"
+      ? { type, code: turn.error?.code ?? "unknown", message: turn.error?.message ?? "Unknown error" }
+      : { type, reason: "user_cancelled" }
+    );
+    return code;
+  }
+  return finish(turn.sessionId, runner, context);
 }
 
 async function listSessions(context: CommandContext): Promise<ExitCode> {
@@ -95,11 +103,30 @@ async function undoSession(
       );
     }
     const checkpoints = await context.runtimeFactory.createCheckpointStore();
+
+    const expectedHashes = new Map<string, string | null>();
+    for await (const event of context.sessions.read(sessionId)) {
+      if (
+        event.type === "tool_completed" &&
+        event.result.ok &&
+        event.result.metadata
+      ) {
+        const path = event.result.metadata["path"];
+        const newSha256 = event.result.metadata["newSha256"];
+        if (typeof path === "string" && typeof newSha256 === "string") {
+          expectedHashes.set(path, newSha256);
+        } else if (typeof path === "string" && newSha256 === null) {
+          expectedHashes.set(path, null);
+        }
+      }
+    }
+
     reportRestore(
       await checkpoints.restore({
         sessionId,
         workspaceRoot: context.workspaceRoot,
         signal: context.signal,
+        expectedHashes,
       }),
       context.io,
     );
@@ -171,10 +198,18 @@ async function interactiveLoop(
         sessionId: item.sessionId,
         limits: loaded.config.limits,
         signal: context.signal,
-        token,
+        ...(token !== undefined && { token }),
       });
       const code = reportTurn(resumed, context.io);
-      if (code !== null) return code;
+      if (code !== null) {
+        const type = code === EXIT_CODES.cancelled ? "session_cancelled" : "session_failed";
+        await context.sessions.append(item.sessionId, type === "session_failed"
+          ? { type, code: resumed.error?.code ?? "unknown", message: resumed.error?.message ?? "Unknown error" }
+          : { type, reason: "user_cancelled" },
+          token
+        );
+        return code;
+      }
       sessionId = resumed.sessionId;
     }
   }
@@ -200,7 +235,7 @@ async function interactiveLoop(
           permissionMode: loaded.config.permissionMode,
           limits: loaded.config.limits,
           signal: context.signal,
-          token,
+          ...(token !== undefined && { token }),
         })
       : await loaded.runner.runTurn({
           kind: "continue",
@@ -208,10 +243,18 @@ async function interactiveLoop(
           message,
           limits: loaded.config.limits,
           signal: context.signal,
-          token,
+          ...(token !== undefined && { token }),
         });
     const code = reportTurn(turn, context.io);
-    if (code !== null) return code;
+    if (code !== null) {
+      const type = code === EXIT_CODES.cancelled ? "session_cancelled" : "session_failed";
+      await context.sessions.append(turn.sessionId, type === "session_failed"
+        ? { type, code: turn.error?.code ?? "unknown", message: turn.error?.message ?? "Unknown error" }
+        : { type, reason: "user_cancelled" },
+        token
+      );
+      return code;
+    }
     sessionId = turn.sessionId;
   }
 }

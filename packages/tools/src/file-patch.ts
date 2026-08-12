@@ -9,7 +9,7 @@ import type {
   ToolResult,
 } from "@agent/contracts";
 
-import { writeFileAtomic } from "./atomic-file.js";
+import { writeFileAtomic, writeFileExclusiveAtomic } from "./atomic-file.js";
 import {
   toolFailure,
   toolSuccess,
@@ -333,10 +333,25 @@ export async function runFilePatch(
       }
     }
 
-    await writeFileAtomic(finalTarget.absolutePath, next, {
-      ...(mode === undefined ? {} : { mode }),
-      signal: context.signal,
-    });
+    if (parsed.create) {
+      const result = await writeFileExclusiveAtomic(finalTarget.absolutePath, next, {
+        ...(mode === undefined ? {} : { mode }),
+        signal: context.signal,
+      });
+      if (result === "exists") {
+        return toolFailure(
+          call,
+          "FILE_ALREADY_EXISTS",
+          "patch target changed before commit",
+        );
+      }
+    } else {
+      await writeFileAtomic(finalTarget.absolutePath, next, {
+        ...(mode === undefined ? {} : { mode }),
+        signal: context.signal,
+        expectedSha256: originalSha256 ?? undefined,
+      });
+    }
 
     return toolSuccess(
       call,

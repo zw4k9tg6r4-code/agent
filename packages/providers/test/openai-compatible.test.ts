@@ -513,4 +513,3 @@ describe("OpenAICompatibleProvider", () => {
     ).rejects.toThrow("SSE frame exceeded maximum buffer size");
   });
 });
-

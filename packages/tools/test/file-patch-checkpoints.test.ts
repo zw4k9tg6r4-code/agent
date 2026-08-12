@@ -87,7 +87,6 @@ describe("runFilePatch and FileCheckpointStore", () => {
       }),
       context(),
     );
-
     expect(first).toMatchObject({
       ok: true,
       toolCallId: "call-file-patch",
