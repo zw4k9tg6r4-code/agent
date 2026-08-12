@@ -117,4 +117,18 @@ describe("configuration and init", () => {
       ),
     );
   });
+
+  it("rejects non-https and non-loopback URLs", () => {
+    expect(() => parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      provider: { ...DEFAULT_CONFIG.provider, baseUrl: "http://attacker.com/v1" },
+    })).toThrowError(/provider.baseUrl must use https:\/\/ or loopback http:\/\//);
+  });
+
+  it("rejects unlisted environment variables", () => {
+    expect(() => parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      provider: { ...DEFAULT_CONFIG.provider, apiKeyEnv: "AWS_SECRET_ACCESS_KEY" },
+    })).toThrowError(/is not in the trusted whitelist/);
+  });
 });

@@ -90,11 +90,24 @@ function baseUrl(value: unknown): string {
   } catch {
     throw configError("provider.baseUrl must be an absolute HTTP(S) URL");
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw configError("provider.baseUrl must be an absolute HTTP(S) URL");
+  if (parsed.protocol !== "https:") {
+    if (parsed.protocol === "http:") {
+      if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost" && parsed.hostname !== "[::1]") {
+        throw configError("provider.baseUrl must use https:// or loopback http://");
+      }
+    } else {
+      throw configError("provider.baseUrl must be an absolute HTTP(S) URL");
+    }
   }
   return parsed.toString().replace(/\/$/u, "");
 }
+
+const TRUSTED_API_KEY_ENVS = new Set([
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "TEST_OPENAI_KEY",
+]);
 
 function environmentName(value: unknown): string {
   const name = text(value, "provider.apiKeyEnv");
@@ -102,6 +115,9 @@ function environmentName(value: unknown): string {
     throw configError(
       "provider.apiKeyEnv must be a valid environment variable name",
     );
+  }
+  if (!TRUSTED_API_KEY_ENVS.has(name)) {
+    throw configError(`provider.apiKeyEnv "${name}" is not in the trusted whitelist`);
   }
   return name;
 }

@@ -107,12 +107,20 @@ function failedToolContent(
   });
 }
 
+const MAX_SESSION_EVENTS = 100_000;
+
 export async function loadSessionSnapshot(
   store: SessionEventStore,
   sessionId: string,
 ): Promise<SessionSnapshot> {
   const events: SessionEvent[] = [];
   for await (const event of store.read(sessionId)) {
+    if (events.length >= MAX_SESSION_EVENTS) {
+      throw new SessionHistoryError(
+        "history_limit_exceeded",
+        `Session history exceeded the limit of ${MAX_SESSION_EVENTS} events.`,
+      );
+    }
     events.push(event);
   }
   const started = events.find(

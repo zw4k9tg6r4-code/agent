@@ -13,6 +13,7 @@ import type {
 
 import type { PendingToolState } from "./history.js";
 import { sanitizeToolResult } from "./redaction.js";
+import { Buffer } from "node:buffer";
 
 export interface DispatchToolInput {
   readonly state: PendingToolState;
@@ -206,6 +207,17 @@ export async function dispatchToolCall(
   }
 
   result = sanitizeToolResult(result);
+  
+  if (result.ok) {
+    const outputBytes = Buffer.byteLength(result.output, "utf8");
+    if (outputBytes > tool.definition.outputLimitBytes) {
+      result = failure(
+        input.state.call,
+        "tool_output_too_large",
+        `Tool output exceeded the limit of ${tool.definition.outputLimitBytes} bytes.`,
+      );
+    }
+  }
 
   if (result.toolCallId !== input.state.call.id) {
     result = failure(

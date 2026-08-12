@@ -142,6 +142,7 @@ export interface SessionEventSink {
   append(
     sessionId: string,
     event: SessionEventData,
+    token?: string,
   ): Promise<SessionEvent>;
 }
 

@@ -24,6 +24,31 @@ import {
 
 import { CliError, EXIT_CODES } from "./errors.js";
 
+export async function assertSafeRoot(workspaceRoot: string, sessionsRoot?: string): Promise<void> {
+  const realWorkspace = await realpath(workspaceRoot);
+  const agentDir = join(workspaceRoot, ".agent");
+  const dirs = sessionsRoot === undefined ? [agentDir] : [agentDir, sessionsRoot];
+  for (const dir of dirs) {
+    try {
+      const stats = await lstat(dir);
+      if (stats.isSymbolicLink()) {
+        throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `directory ${dir} must not be a symbolic link`);
+      }
+      const real = await realpath(dir);
+      const expectedReal = dir === agentDir ? join(realWorkspace, ".agent") : join(realWorkspace, ".agent", "sessions");
+      if (real !== expectedReal) {
+        throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `directory ${dir} must not be a reparse point or symlink`);
+      }
+    } catch (error: any) {
+      if (error.code === "ENOENT") {
+        await mkdir(dir, { mode: 0o700, recursive: true });
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const EVENT_TYPES = new Set<SessionEvent["type"]>([
   "session_started",
@@ -734,27 +759,36 @@ export class JsonlSessionEventStore implements SessionEventStore {
   async append(
     sessionId: string,
     data: SessionEventData,
+    token?: string,
   ): Promise<SessionEvent> {
     assertSessionId(sessionId);
-    return this.#withFileLock(
-      sessionId,
-      this.#lockPath(sessionId, "append"),
-      true,
-      async () => this.#appendUnlocked(sessionId, data),
-    );
+    await assertSafeRoot(dirname(dirname(this.#root)), this.#root);
+    const path = this.#lockPath(sessionId);
+    if (token !== undefined) {
+      await this.#verifyLock(path, token);
+      return this.#appendUnlocked(sessionId, data);
+    }
+    const lock = await this.#acquireLock(sessionId, path, true);
+    try {
+      return await this.#appendUnlocked(sessionId, data);
+    } finally {
+      await this.#releaseLock(path, lock.token);
+    }
   }
 
   async withSessionLease<T>(
     sessionId: string,
-    action: () => Promise<T>,
+    action: (token: string) => Promise<T>,
   ): Promise<T> {
     assertSessionId(sessionId);
-    return this.#withFileLock(
-      sessionId,
-      this.#lockPath(sessionId, "lease"),
-      false,
-      action,
-    );
+    await assertSafeRoot(dirname(dirname(this.#root)), this.#root);
+    const path = this.#lockPath(sessionId);
+    const lock = await this.#acquireLock(sessionId, path, false);
+    try {
+      return await action(lock.token);
+    } finally {
+      await this.#releaseLock(path, lock.token);
+    }
   }
 
   async get(sessionId: string): Promise<SessionListItem | undefined> {
@@ -964,43 +998,15 @@ export class JsonlSessionEventStore implements SessionEventStore {
     return { events, needsSeparator, repairOffset };
   }
 
-  async #ensureSafeRoot(): Promise<void> {
-    const workspaceRoot = dirname(dirname(this.#root));
-    const realWorkspace = await realpath(workspaceRoot);
-    const agentDir = join(workspaceRoot, ".agent");
-    for (const dir of [agentDir, this.#root]) {
-      try {
-        const stats = await lstat(dir);
-        if (stats.isSymbolicLink()) {
-          throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `session directory ${dir} must not be a symbolic link`);
-        }
-        const real = await realpath(dir);
-        const expectedReal = dir === agentDir ? join(realWorkspace, ".agent") : join(realWorkspace, ".agent", "sessions");
-        if (real !== expectedReal) {
-          throw new CliError("DATA_ERROR", EXIT_CODES.usageOrConfig, `session directory ${dir} must not be a reparse point or symlink`);
-        }
-      } catch (error: any) {
-        if (error.code === "ENOENT") {
-          await mkdir(dir, { mode: 0o700 });
-          continue;
-        }
-        throw error;
-      }
-    }
-  }
-
-  async #withFileLock<T>(
-    sessionId: string,
-    path: string,
-    wait: boolean,
-    action: () => Promise<T>,
-  ): Promise<T> {
-    await this.#ensureSafeRoot();
-    const lock = await this.#acquireLock(sessionId, path, wait);
+  async #verifyLock(path: string, token: string): Promise<void> {
+    let value: unknown;
     try {
-      return await action();
-    } finally {
-      await this.#releaseLock(path, lock.token);
+      value = JSON.parse(await readFile(path, "utf8")) as unknown;
+    } catch (error) {
+      throw new CliError("SESSION_BUSY", EXIT_CODES.usageOrConfig, "invalid or missing session lease token");
+    }
+    if (!record(value) || value["token"] !== token) {
+      throw new CliError("SESSION_BUSY", EXIT_CODES.usageOrConfig, "invalid or expired session lease token");
     }
   }
 
@@ -1077,7 +1083,7 @@ export class JsonlSessionEventStore implements SessionEventStore {
     return join(this.#root, `${sessionId}.jsonl`);
   }
 
-  #lockPath(sessionId: string, kind: "append" | "lease"): string {
-    return join(this.#root, `${sessionId}.${kind}.lock`);
+  #lockPath(sessionId: string): string {
+    return join(this.#root, `${sessionId}.lock`);
   }
 }

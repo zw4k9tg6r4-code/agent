@@ -204,7 +204,7 @@ class DefaultAgentRunner implements AgentRunner {
         task: userMessage,
         workspaceRoot,
         permissionMode,
-      });
+      }, options.token);
     } else {
       if (existing === undefined) {
         throw new AgentCoreError(
@@ -261,13 +261,13 @@ class DefaultAgentRunner implements AgentRunner {
       type: "turn_started",
       turnId,
       kind: options.kind,
-    });
+    }, options.token);
     if (userMessage !== undefined) {
       await this.#dependencies.sessions.append(sessionId, {
         type: "user_message",
         turnId,
         content: userMessage,
-      });
+      }, options.token);
     }
 
     if (
@@ -283,7 +283,7 @@ class DefaultAgentRunner implements AgentRunner {
         turnId,
         code: "unknown_tool_execution_state",
         message,
-      });
+      }, options.token);
       return resultError(
         sessionId,
         turnId,
@@ -309,7 +309,7 @@ class DefaultAgentRunner implements AgentRunner {
           turnId,
           beforeTokens: loadedContext.beforeTokens,
           afterTokens: loadedContext.afterTokens,
-        });
+        }, options.token);
       }
 
       const current = await loadSessionSnapshot(
@@ -344,7 +344,7 @@ class DefaultAgentRunner implements AgentRunner {
           turnId,
           code: loop.error.code,
           message: loop.error.message,
-        });
+        }, options.token);
         return {
           sessionId,
           turnId,
@@ -361,7 +361,7 @@ class DefaultAgentRunner implements AgentRunner {
         output: loop.output,
         steps: loop.steps,
         usage: loop.usage,
-      });
+      }, options.token);
       return {
         sessionId,
         turnId,
@@ -405,7 +405,7 @@ class DefaultAgentRunner implements AgentRunner {
         turnId,
         code,
         message,
-      });
+      }, options.token);
       return resultError(
         sessionId,
         turnId,
@@ -484,7 +484,7 @@ class DefaultAgentRunner implements AgentRunner {
       type: "session_completed",
       summary,
       usage,
-    });
+    }, options.token);
     return {
       sessionId: options.sessionId,
       status: "completed",

@@ -86,7 +86,7 @@ async function undoSession(
   sessionId: string,
   context: CommandContext,
 ): Promise<ExitCode> {
-  return context.sessions.withSessionLease(sessionId, async () => {
+  return context.sessions.withSessionLease(sessionId, async (token) => {
     if (await context.sessions.get(sessionId) === undefined) {
       throw new CliError(
         "SESSION_NOT_FOUND",
@@ -139,6 +139,7 @@ async function interactiveLoop(
   context: CommandContext,
   initialSessionId?: string,
   resume = false,
+  token?: string,
 ): Promise<ExitCode> {
   let sessionId = initialSessionId;
   let loaded:
@@ -170,6 +171,7 @@ async function interactiveLoop(
         sessionId: item.sessionId,
         limits: loaded.config.limits,
         signal: context.signal,
+        token,
       });
       const code = reportTurn(resumed, context.io);
       if (code !== null) return code;
@@ -198,6 +200,7 @@ async function interactiveLoop(
           permissionMode: loaded.config.permissionMode,
           limits: loaded.config.limits,
           signal: context.signal,
+          token,
         })
       : await loaded.runner.runTurn({
           kind: "continue",
@@ -205,6 +208,7 @@ async function interactiveLoop(
           message,
           limits: loaded.config.limits,
           signal: context.signal,
+          token,
         });
     const code = reportTurn(turn, context.io);
     if (code !== null) return code;
@@ -248,7 +252,7 @@ export async function runCommand(
   return command.kind === "resume"
     ? context.sessions.withSessionLease(
         command.sessionId,
-        async () => interactiveLoop(context, command.sessionId, true),
+        async (token) => interactiveLoop(context, command.sessionId, true, token),
       )
     : interactiveLoop(context);
 }

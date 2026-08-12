@@ -123,12 +123,17 @@ export const SHELL_EXECUTE_DEFINITION = {
   inputSchema: {
     type: "object",
     additionalProperties: false,
-    required: ["command"],
+    required: ["program", "args"],
     properties: {
-      command: {
+      program: {
         type: "string",
         minLength: 1,
-        maxLength: 8000,
+        maxLength: 1024,
+      },
+      args: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 1024,
       },
       cwd: { type: "string", minLength: 1 },
       timeoutMs: {

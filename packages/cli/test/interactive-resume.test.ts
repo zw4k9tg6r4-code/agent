@@ -178,6 +178,7 @@ describe("resume", () => {
         timeoutMs: 300_000,
       },
       signal,
+      token: expect.any(String),
     }]);
     expect(runner.finishOptions).toEqual([{
       sessionId: "session-resume",
@@ -240,6 +241,7 @@ describe("resume", () => {
         timeoutMs: 300_000,
       },
       signal,
+      token: expect.any(String),
     }]);
     expect(runner.finishOptions).toEqual([{
       sessionId: "session-ready",
@@ -325,6 +327,7 @@ describe("resume", () => {
         timeoutMs: 300_000,
       },
       signal,
+      token: expect.any(String),
     }]);
   });
 

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "./config.js";
+import { assertSafeRoot } from "./session-store.js";
 
 const IGNORES = [".agent/sessions/", ".agent/checkpoints/"] as const;
 
@@ -40,6 +41,7 @@ export async function initializeWorkspace(
 ): Promise<InitializeResult> {
   const root = join(workspaceRoot, ".agent");
   const configPath = join(root, "config.json");
+  await assertSafeRoot(workspaceRoot);
   await mkdir(join(root, "sessions"), { recursive: true, mode: 0o700 });
   await mkdir(join(root, "checkpoints"), { recursive: true, mode: 0o700 });
 

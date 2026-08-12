@@ -26,6 +26,7 @@ export interface AgentNewTurnOptions {
   readonly limits: AgentRunLimits;
   readonly signal: AbortSignal;
   readonly sessionId?: string;
+  readonly token?: string;
 }
 
 export interface AgentContinueTurnOptions {
@@ -34,6 +35,7 @@ export interface AgentContinueTurnOptions {
   readonly message: string;
   readonly limits: AgentRunLimits;
   readonly signal: AbortSignal;
+  readonly token?: string;
 }
 
 export interface AgentResumeTurnOptions {
@@ -41,6 +43,7 @@ export interface AgentResumeTurnOptions {
   readonly sessionId: string;
   readonly limits: AgentRunLimits;
   readonly signal: AbortSignal;
+  readonly token?: string;
 }
 
 export type AgentTurnOptions =
@@ -51,6 +54,7 @@ export type AgentTurnOptions =
 export interface AgentFinishOptions {
   readonly sessionId: string;
   readonly signal: AbortSignal;
+  readonly token?: string;
 }
 
 export interface AgentDependencies {
