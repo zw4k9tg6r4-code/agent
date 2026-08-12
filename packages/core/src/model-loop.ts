@@ -15,6 +15,7 @@ import {
   compactModelMessages,
   estimateMessagesTokens,
 } from "./context.js";
+import { AgentCoreError } from "./agent-runner.js";
 import type { PendingToolState } from "./history.js";
 import { dispatchToolCall } from "./tool-dispatcher.js";
 
@@ -217,6 +218,8 @@ export async function runModelLoop(
     const requestMessages = [...messages];
     const calls: ToolCall[] = [];
     let text = "";
+    let textLength = 0;
+    const callIds = new Set<string>();
     let requestUsage: TokenUsage | undefined;
     let stopReason: ModelStopReason | undefined;
     try {
@@ -230,6 +233,10 @@ export async function runModelLoop(
         { signal: input.signal },
       )) {
         if (event.type === "text_delta") {
+          textLength += event.delta.length;
+          if (textLength > input.limits.maxOutputTokens * 8) {
+            throw new AgentCoreError("model_output_too_large", "Model output text length exceeded absolute bounds.");
+          }
           text += event.delta;
           await input.dependencies.sessions.append(input.sessionId, {
             type: "model_output",
@@ -238,6 +245,13 @@ export async function runModelLoop(
             text: event.delta,
           });
         } else if (event.type === "tool_call") {
+          if (callIds.has(event.call.id)) {
+            throw new AgentCoreError("duplicate_tool_call_id", `Model generated duplicate tool call ID: ${event.call.id}`);
+          }
+          if (calls.length >= 30) {
+            throw new AgentCoreError("too_many_tool_calls", "Model generated too many tool calls in a single turn.");
+          }
+          callIds.add(event.call.id);
           calls.push(event.call);
         } else if (event.type === "usage") {
           requestUsage = event.usage;

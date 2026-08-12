@@ -627,10 +627,6 @@ export class OpenAICompatibleProvider implements ModelProvider {
       let completed: ModelStopReason | undefined;
       try {
         for await (const data of decodeSseData(response.body)) {
-          state.frames += 1;
-          if (state.frames > 20_000) {
-            throw new OpenAICompatibleError("response_too_large", "Exceeded maximum allowed SSE frames.", false);
-          }
           if (data === "[DONE]") {
             break;
           }
