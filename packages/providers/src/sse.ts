@@ -1,11 +1,30 @@
 import { Buffer } from "node:buffer";
-function eventBoundary(
-  buffer: string,
+
+function findBoundary(
+  text: string,
+  fromIndex: number,
 ): { readonly index: number; readonly length: number } | undefined {
-  const match = /\r?\n\r?\n/.exec(buffer);
-  return match?.index === undefined
-    ? undefined
-    : { index: match.index, length: match[0].length };
+  const idxLf = text.indexOf("\n\n", fromIndex);
+  const idxCrlf = text.indexOf("\r\n\r\n", fromIndex);
+  const idxMixed = text.indexOf("\r\n\n", fromIndex);
+
+  let bestIdx = -1;
+  let bestLen = 0;
+
+  if (idxLf !== -1) {
+    bestIdx = idxLf;
+    bestLen = 2;
+  }
+  if (idxCrlf !== -1 && (bestIdx === -1 || idxCrlf < bestIdx)) {
+    bestIdx = idxCrlf;
+    bestLen = 4;
+  }
+  if (idxMixed !== -1 && (bestIdx === -1 || idxMixed < bestIdx)) {
+    bestIdx = idxMixed;
+    bestLen = 3;
+  }
+
+  return bestIdx === -1 ? undefined : { index: bestIdx, length: bestLen };
 }
 
 function eventData(event: string): string | undefined {
@@ -45,11 +64,14 @@ export async function* decodeSseData(
       if (totalBytes > 20_000_000) {
         throw new Error("SSE stream exceeded maximum allowed bytes (20MB).");
       }
-      buffer += decoder.decode(result.value, { stream: true });
-      if (Buffer.byteLength(buffer, "utf8") > 10_000_000) {
+      const prevLen = buffer.length;
+      const chunkText = decoder.decode(result.value, { stream: true });
+      buffer += chunkText;
+      if (buffer.length > 10_000_000 || Buffer.byteLength(buffer, "utf8") > 10_000_000) {
         throw new Error("SSE frame exceeded maximum buffer size");
       }
-      let boundary = eventBoundary(buffer);
+      let searchPos = Math.max(0, prevLen - 3);
+      let boundary = findBoundary(buffer, searchPos);
       while (boundary !== undefined) {
         totalFrames += 1;
         if (totalFrames > 20_000) {
@@ -61,7 +83,7 @@ export async function* decodeSseData(
         if (data !== undefined) {
           yield data;
         }
-        boundary = eventBoundary(buffer);
+        boundary = findBoundary(buffer, 0);
       }
     }
     if (buffer.trim().length > 0) {

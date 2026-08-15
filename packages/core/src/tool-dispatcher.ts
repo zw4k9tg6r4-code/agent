@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import type {
   CheckpointStore,
   PermissionConfirmer,
@@ -9,12 +11,12 @@ import type {
   ToolCall,
   ToolFailure,
   ToolResult,
+  JsonObject,
 } from "@agent/contracts";
 
-import { AgentCoreError } from "./agent-runner.js";
+import { AgentCoreError } from "./errors.js";
 import type { PendingToolState } from "./history.js";
 import { sanitizeToolResult } from "./redaction.js";
-import { Buffer } from "node:buffer";
 
 export interface DispatchToolInput {
   readonly state: PendingToolState;
@@ -65,6 +67,101 @@ async function recordFailure(
     result,
   });
   return result;
+}
+
+function validateAndNormalizeToolResult(
+  rawResult: unknown,
+  call: ToolCall,
+  limitBytes: number,
+): ToolResult {
+  if (typeof rawResult !== "object" || rawResult === null) {
+    return failure(call, "invalid_tool_result", "Tool returned a non-object result.");
+  }
+  const res = rawResult as Record<string, unknown>;
+  if (typeof res["ok"] !== "boolean") {
+    return failure(call, "invalid_tool_result", "Tool result ok property must be a boolean.");
+  }
+  if (res["toolCallId"] !== call.id) {
+    return failure(call, "invalid_tool_result", "Tool result id does not match the requested call id.");
+  }
+  if (typeof res["output"] !== "string") {
+    return failure(call, "invalid_tool_result", "Tool output must be a string.");
+  }
+  if (Buffer.byteLength(res["output"], "utf8") > limitBytes) {
+    return failure(call, "tool_output_too_large", `Tool output string exceeded the limit of ${limitBytes} bytes.`);
+  }
+  if (res["metadata"] !== undefined) {
+    if (typeof res["metadata"] !== "object" || res["metadata"] === null || Array.isArray(res["metadata"])) {
+      return failure(call, "invalid_tool_result", "Tool metadata must be a JSON object.");
+    }
+    const visited = new Set<object>();
+    let nodes = 0;
+    let valid = true;
+    let failReason = "";
+    function checkMetadata(val: unknown, depth: number): void {
+      if (!valid) return;
+      nodes += 1;
+      if (nodes > 2048) {
+        valid = false;
+        failReason = "Tool metadata exceeded 2048 nodes.";
+        return;
+      }
+      if (depth > 32) {
+        valid = false;
+        failReason = "Tool metadata exceeded depth limit of 32.";
+        return;
+      }
+      if (typeof val === "object" && val !== null) {
+        if (visited.has(val)) {
+          valid = false;
+          failReason = "Tool metadata contains circular references.";
+          return;
+        }
+        visited.add(val);
+        if (Array.isArray(val)) {
+          for (const item of val) checkMetadata(item, depth + 1);
+        } else {
+          for (const item of Object.values(val)) checkMetadata(item, depth + 1);
+        }
+      }
+    }
+    checkMetadata(res["metadata"], 1);
+    if (!valid) {
+      return failure(call, "invalid_tool_result", failReason);
+    }
+    let metaStr: string;
+    try {
+      metaStr = JSON.stringify(res["metadata"]);
+    } catch {
+      return failure(call, "invalid_tool_result", "Tool metadata could not be serialized to JSON.");
+    }
+    if (Buffer.byteLength(metaStr, "utf8") > limitBytes) {
+      return failure(call, "tool_metadata_too_large", `Tool metadata exceeded the limit of ${limitBytes} bytes.`);
+    }
+  }
+  if (!res["ok"]) {
+    const errorObj = res["error"];
+    if (typeof errorObj !== "object" || errorObj === null || Array.isArray(errorObj)) {
+      return failure(call, "invalid_tool_result", "Tool failure missing valid error object.");
+    }
+    const err = errorObj as Record<string, unknown>;
+    const code = typeof err["code"] === "string" && err["code"].length > 0 ? err["code"] : "tool_failed";
+    const message = typeof err["message"] === "string" ? err["message"] : "Tool execution failed.";
+    const retryable = typeof err["retryable"] === "boolean" ? err["retryable"] : false;
+    return {
+      toolCallId: call.id,
+      ok: false,
+      output: res["output"] as string,
+      ...(res["metadata"] !== undefined && { metadata: res["metadata"] as JsonObject }),
+      error: { code, message, retryable },
+    };
+  }
+  return {
+    toolCallId: call.id,
+    ok: true,
+    output: res["output"] as string,
+    ...(res["metadata"] !== undefined && { metadata: res["metadata"] as JsonObject }),
+  };
 }
 
 export async function dispatchToolCall(
@@ -187,9 +284,9 @@ export async function dispatchToolCall(
     toolCallId: input.state.call.id,
   });
 
-  let result: ToolResult;
+  let rawResult: ToolResult;
   try {
-    result = await tool.execute(resolvedCall, {
+    rawResult = await tool.execute(resolvedCall, {
       workspaceRoot: input.workspaceRoot,
       sessionId: input.sessionId,
       signal: input.signal,
@@ -199,7 +296,7 @@ export async function dispatchToolCall(
     if (input.signal.aborted) {
       throw input.signal.reason;
     }
-    result = failure(
+    rawResult = failure(
       input.state.call,
       "tool_execution_failed",
       error instanceof Error ? error.message : "Tool execution failed.",
@@ -207,6 +304,8 @@ export async function dispatchToolCall(
     );
   }
 
+  const limitBytes = tool.definition.outputLimitBytes;
+  let result = validateAndNormalizeToolResult(rawResult, input.state.call, limitBytes);
   result = sanitizeToolResult(result);
 
   if (!result.ok && result.error.code === "PROCESS_TERMINATION_FAILED") {
@@ -216,61 +315,6 @@ export async function dispatchToolCall(
     );
   }
 
-  const limitBytes = tool.definition.outputLimitBytes;
-  
-  if (typeof result.output === "string") {
-    if (Buffer.byteLength(result.output, "utf8") > limitBytes) {
-      result = failure(
-        input.state.call,
-        "tool_output_too_large",
-        `Tool output string exceeded the limit of ${limitBytes} bytes.`,
-      );
-    }
-  } else if (result.output !== undefined) {
-    try {
-      const outStr = JSON.stringify(result.output);
-      if (Buffer.byteLength(outStr, "utf8") > limitBytes) {
-        result = failure(
-          input.state.call,
-          "tool_output_too_large",
-          `Tool output object exceeded the limit of ${limitBytes} bytes.`,
-        );
-      }
-    } catch {
-      result = failure(
-        input.state.call,
-        "invalid_tool_result",
-        "Tool output could not be serialized to JSON.",
-      );
-    }
-  }
-
-  if (result.metadata !== undefined) {
-    try {
-      const metaStr = JSON.stringify(result.metadata);
-      if (Buffer.byteLength(metaStr, "utf8") > limitBytes) {
-        result = failure(
-          input.state.call,
-          "tool_metadata_too_large",
-          `Tool metadata exceeded the limit of ${limitBytes} bytes.`,
-        );
-      }
-    } catch {
-      result = failure(
-        input.state.call,
-        "invalid_tool_result",
-        "Tool metadata could not be serialized to JSON.",
-      );
-    }
-  }
-
-  if (result.toolCallId !== input.state.call.id) {
-    result = failure(
-      input.state.call,
-      "invalid_tool_result",
-      "Tool result id does not match the requested call id.",
-    );
-  }
   if (result.ok) {
     await input.sessions.append(input.sessionId, {
       type: "tool_completed",

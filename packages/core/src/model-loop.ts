@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import type {
   AgentDependencies,
   AgentRunError,
@@ -15,9 +17,48 @@ import {
   compactModelMessages,
   estimateMessagesTokens,
 } from "./context.js";
-import { AgentCoreError } from "./agent-runner.js";
+import { AgentCoreError } from "./errors.js";
 import type { PendingToolState } from "./history.js";
 import { dispatchToolCall } from "./tool-dispatcher.js";
+
+function validateToolCallPayload(call: ToolCall): void {
+  if (typeof call.id !== "string" || call.id.trim().length === 0 || Buffer.byteLength(call.id, "utf8") > 256) {
+    throw new AgentCoreError("invalid_tool_call", "Tool call ID must be a non-empty string under 256 bytes.");
+  }
+  if (typeof call.name !== "string" || call.name.trim().length === 0 || Buffer.byteLength(call.name, "utf8") > 256) {
+    throw new AgentCoreError("invalid_tool_call", "Tool call name must be a non-empty string under 256 bytes.");
+  }
+  if (typeof call.arguments !== "object" || call.arguments === null || Array.isArray(call.arguments)) {
+    throw new AgentCoreError("invalid_tool_call", "Tool call arguments must be a valid JSON object.");
+  }
+  let nodes = 0;
+  function walk(val: unknown, currentDepth: number): void {
+    nodes += 1;
+    if (nodes > 2048) {
+      throw new AgentCoreError("invalid_tool_call", "Tool call arguments exceeded 2048 nodes.");
+    }
+    if (currentDepth > 32) {
+      throw new AgentCoreError("invalid_tool_call", "Tool call arguments exceeded depth limit of 32.");
+    }
+    if (typeof val === "object" && val !== null) {
+      if (Array.isArray(val)) {
+        for (const item of val) walk(item, currentDepth + 1);
+      } else {
+        for (const v of Object.values(val)) walk(v, currentDepth + 1);
+      }
+    }
+  }
+  walk(call.arguments, 1);
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(call.arguments);
+  } catch {
+    throw new AgentCoreError("invalid_tool_call", "Tool call arguments could not be serialized to JSON.");
+  }
+  if (Buffer.byteLength(serialized, "utf8") > 1_000_000) {
+    throw new AgentCoreError("invalid_tool_call", "Tool call arguments exceeded 1MB limit.");
+  }
+}
 
 const ZERO_USAGE: TokenUsage = {
   inputTokens: 0,
@@ -169,6 +210,19 @@ export async function runModelLoop(
   let latestOutput = "";
   const seenCallIds = new Set<string>();
 
+  for (const msg of input.messages) {
+    if (msg.role === "assistant" && msg.toolCalls) {
+      for (const call of msg.toolCalls) {
+        seenCallIds.add(call.id);
+      }
+    } else if (msg.role === "tool") {
+      seenCallIds.add(msg.toolCallId);
+    }
+  }
+  for (const state of input.pendingToolStates ?? []) {
+    seenCallIds.add(state.call.id);
+  }
+
   if ((input.pendingToolStates?.length ?? 0) > 0) {
     await dispatchStates(
       input,
@@ -245,6 +299,7 @@ export async function runModelLoop(
             text: event.delta,
           });
         } else if (event.type === "tool_call") {
+          validateToolCallPayload(event.call);
           if (seenCallIds.has(event.call.id)) {
             throw new AgentCoreError("duplicate_tool_call_id", `Model generated duplicate tool call ID: ${event.call.id}`);
           }
@@ -299,9 +354,20 @@ export async function runModelLoop(
       requestUsage.inputTokens >= 0 &&
       requestUsage.outputTokens >= 0 &&
       requestUsage.totalTokens >= 0 &&
-      requestUsage.totalTokens === requestUsage.inputTokens + requestUsage.outputTokens
+      requestUsage.totalTokens === requestUsage.inputTokens + requestUsage.outputTokens &&
+      (requestUsage.estimatedCostUsd === undefined ||
+        (typeof requestUsage.estimatedCostUsd === "number" &&
+          Number.isFinite(requestUsage.estimatedCostUsd) &&
+          requestUsage.estimatedCostUsd >= 0))
     ) {
-      observedUsage = requestUsage;
+      observedUsage = {
+        inputTokens: requestUsage.inputTokens,
+        outputTokens: requestUsage.outputTokens,
+        totalTokens: requestUsage.totalTokens,
+        ...(requestUsage.estimatedCostUsd !== undefined && {
+          estimatedCostUsd: requestUsage.estimatedCostUsd,
+        }),
+      };
     }
 
     const assistant = calls.length === 0

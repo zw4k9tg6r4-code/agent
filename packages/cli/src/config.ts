@@ -20,7 +20,7 @@ export interface OpenAICompatibleConfig {
 }
 
 export interface AgentConfig {
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly provider: OpenAICompatibleConfig;
   readonly permissionMode: PermissionMode;
   readonly limits: AgentRunLimits;
@@ -28,7 +28,7 @@ export interface AgentConfig {
 }
 
 export const DEFAULT_CONFIG: AgentConfig = {
-  version: 1,
+  version: 2,
   provider: {
     kind: "openai-compatible",
     profileId: "default",
@@ -68,71 +68,28 @@ function text(value: unknown, path: string): string {
   return value.trim();
 }
 
-const MAX_SAFE_TIMEOUT_MS = 2_147_483_647; // 2^31 - 1 (max for setTimeout)
-
 function positiveInteger(value: unknown, path: string): number {
-  if (!Number.isInteger(value) || (value as number) <= 0) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     throw configError(`${path} must be a positive integer`);
   }
-  return value as number;
+  return value;
 }
 
 function timeoutMs(value: unknown, path: string): number {
-  const n = positiveInteger(value, path);
-  if (n > MAX_SAFE_TIMEOUT_MS) {
-    throw configError(`${path} must not exceed ${MAX_SAFE_TIMEOUT_MS} (2^31-1)`);
-  }
-  return n;
+  if (value === undefined) return 60_000;
+  return positiveInteger(value, path);
 }
 
 function retryCount(value: unknown): number {
-  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 2) {
-    throw configError("provider.maxRetries must be an integer from 0 to 2");
+  if (value === undefined) return 2;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 2) {
+    throw configError("provider.maxRetries must be an integer from 0 through 2");
   }
-  return value as number;
-}
-
-function baseUrl(value: unknown): string {
-  const raw = text(value, "provider.baseUrl");
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw configError("provider.baseUrl must be an absolute HTTP(S) URL");
-  }
-  if (parsed.protocol !== "https:") {
-    if (parsed.protocol === "http:") {
-      if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost" && parsed.hostname !== "[::1]") {
-        throw configError("provider.baseUrl must use https:// or loopback http://");
-      }
-    } else {
-      throw configError("provider.baseUrl must be an absolute HTTP(S) URL");
-    }
-  }
-  return parsed.toString().replace(/\/$/u, "");
-}
-
-const TRUSTED_API_KEY_ENVS = new Set([
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "GEMINI_API_KEY",
-  "TEST_OPENAI_KEY",
-]);
-
-function environmentName(value: unknown): string {
-  const name = text(value, "provider.apiKeyEnv");
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
-    throw configError(
-      "provider.apiKeyEnv must be a valid environment variable name",
-    );
-  }
-  if (!TRUSTED_API_KEY_ENVS.has(name)) {
-    throw configError(`provider.apiKeyEnv "${name}" is not in the trusted whitelist`);
-  }
-  return name;
+  return value;
 }
 
 function skillNames(value: unknown): readonly string[] {
+  if (value === undefined) return [];
   if (!Array.isArray(value)) {
     throw configError("skills must be an array of names");
   }
@@ -160,7 +117,8 @@ function profileIdString(value: unknown, path: string): string {
 
 export function parseAgentConfig(value: unknown): AgentConfig {
   const root = record(value, "configuration");
-  if (root["version"] !== 1) throw configError("version must be 1");
+  const version = root["version"];
+  if (version !== 1 && version !== 2) throw configError("version must be 1 or 2");
   const provider = record(root["provider"], "provider");
   if (provider["kind"] !== "openai-compatible") {
     throw configError('provider.kind must be "openai-compatible"');
@@ -189,11 +147,22 @@ export function parseAgentConfig(value: unknown): AgentConfig {
   if (parsedLimits.maxOutputTokens > 200_000) throw configError("limits.maxOutputTokens must not exceed 200,000");
   if (parsedLimits.timeoutMs > 86_400_000) throw configError("limits.timeoutMs must not exceed 86,400,000");
 
+  let profileId: string;
+  if (version === 1) {
+    if (provider["profileId"] !== undefined) {
+      profileId = profileIdString(provider["profileId"], "provider.profileId");
+    } else {
+      profileId = "default";
+    }
+  } else {
+    profileId = profileIdString(provider["profileId"], "provider.profileId");
+  }
+
   return {
-    version: 1,
+    version: version as 1 | 2,
     provider: {
       kind: "openai-compatible",
-      profileId: profileIdString(provider["profileId"], "provider.profileId"),
+      profileId,
       model: text(provider["model"], "provider.model"),
       requestTimeoutMs: timeoutMs(
         provider["requestTimeoutMs"],
@@ -242,6 +211,30 @@ export async function loadAgentConfig(
     if (error instanceof CliError) throw error;
     throw configError("file is not valid JSON");
   }
+}
+
+function baseUrl(value: unknown): string {
+  const raw = text(value, "baseUrl");
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw configError("baseUrl must be an absolute HTTP(S) URL");
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw configError("baseUrl must be an absolute HTTP(S) URL");
+  }
+  return parsed.toString().replace(/\/$/u, "");
+}
+
+function environmentName(value: unknown): string {
+  const name = text(value, "apiKeyEnv");
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+    throw configError(
+      "apiKeyEnv must be a valid environment variable name",
+    );
+  }
+  return name;
 }
 
 export interface ProviderProfile {

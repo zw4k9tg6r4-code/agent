@@ -15,3 +15,4 @@ export class AsyncMutex {
   }
 }
 export const workspaceLock = new AsyncMutex();
+export const checkpointLock = new AsyncMutex();

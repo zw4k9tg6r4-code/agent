@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import {
   lstat,
@@ -21,6 +22,7 @@ import {
   writeFileAtomic,
   writeFileExclusiveAtomic,
 } from "./atomic-file.js";
+import { checkpointLock } from "./mutex.js";
 import {
   isProtectedWorkspacePath,
   resolveWorkspacePath,
@@ -407,91 +409,93 @@ export class FileCheckpointStore implements CheckpointStore {
       return;
     }
 
-    // Enforce the per-session total byte limit before writing new data.
-    const allNames = (await readdir(directory)).filter((n) => BLOB_NAME.test(n));
-    if (allNames.length >= MAX_CHECKPOINT_RECORDS) {
-      throw new Error(
-        `checkpoint session exceeds ${MAX_CHECKPOINT_RECORDS} records`,
-      );
-    }
-    let sessionBytes = 0;
-    for (const blobFileName of allNames) {
-      const blobFilePath = path.join(directory, blobFileName);
-      try {
-        const blobStat = await stat(blobFilePath);
-        sessionBytes += blobStat.size;
-      } catch {
-        // Ignore missing blobs during counting
-      }
-    }
-    if (sessionBytes >= MAX_SESSION_CHECKPOINT_BYTES) {
-      throw new Error(
-        `checkpoint session exceeds ${MAX_SESSION_CHECKPOINT_BYTES} bytes total`,
-      );
-    }
-
-    const createdAt = new Date().toISOString();
-    let proposedBlob: CheckpointBlob;
-    if (target.exists) {
-      const [content, details] = await Promise.all([
-        readFile(target.absolutePath, { signal: request.signal }),
-        stat(target.absolutePath),
-      ]);
-      if (!details.isFile()) {
-        throw new Error("checkpoint targets must be files");
-      }
-      if (
-        details.size > MAX_CHECKPOINT_FILE_BYTES ||
-        content.length > MAX_CHECKPOINT_FILE_BYTES
-      ) {
+    const unlock = await checkpointLock.acquire();
+    try {
+      const allNames = (await readdir(directory)).filter((n) => BLOB_NAME.test(n));
+      if (allNames.length >= MAX_CHECKPOINT_RECORDS) {
         throw new Error(
-          `checkpoint target exceeds ${MAX_CHECKPOINT_FILE_BYTES} bytes`,
+          `checkpoint session exceeds ${MAX_CHECKPOINT_RECORDS} records`,
         );
       }
-      proposedBlob = {
-        version: 1,
-        relativePath: target.relativePath,
-        existed: true,
-        mode: details.mode & 0o777,
-        contentBase64: content.toString("base64"),
-        sha256: createHash("sha256").update(content).digest("hex"),
-        createdAt,
-      };
-    } else {
-      proposedBlob = {
-        version: 1,
-        relativePath: target.relativePath,
-        existed: false,
-        createdAt,
-      };
-    }
-
-    const blobPublish = await writeFileExclusiveAtomic(
-      blobPath,
-      `${JSON.stringify(proposedBlob)}\n`,
-      { mode: 0o600, signal: request.signal },
-    );
-    // A blob without a record is a recoverable interrupted capture. The first
-    // exclusively published blob remains authoritative.
-    const authoritativeBlob =
-      blobPublish === "created"
-        ? proposedBlob
-        : await readBlob(blobPath, request.signal);
-    if (authoritativeBlob.relativePath !== target.relativePath) {
-      throw new Error("orphan checkpoint blob belongs to another path");
-    }
-    const record = recordFromBlob(authoritativeBlob);
-    const recordPublish = await writeFileExclusiveAtomic(
-      recordPath,
-      `${JSON.stringify(record)}\n`,
-      { mode: 0o600, signal: request.signal },
-    );
-    if (recordPublish === "exists") {
-      const winner = await readOptionalRecord(recordPath, request.signal);
-      if (winner === undefined) {
-        throw new Error("checkpoint record disappeared during capture");
+      let sessionBytes = 0;
+      for (const blobFileName of allNames) {
+        const blobFilePath = path.join(directory, blobFileName);
+        try {
+          const blobStat = await stat(blobFilePath);
+          sessionBytes += blobStat.size;
+        } catch {
+          // Ignore missing blobs during counting
+        }
       }
-      validateRecordBlob(winner, authoritativeBlob);
+
+      const createdAt = new Date().toISOString();
+      let proposedBlob: CheckpointBlob;
+      if (target.exists) {
+        const [content, details] = await Promise.all([
+          readFile(target.absolutePath, { signal: request.signal }),
+          stat(target.absolutePath),
+        ]);
+        if (!details.isFile()) {
+          throw new Error("checkpoint targets must be files");
+        }
+        if (
+          details.size > MAX_CHECKPOINT_FILE_BYTES ||
+          content.length > MAX_CHECKPOINT_FILE_BYTES
+        ) {
+          throw new Error(
+            `checkpoint target exceeds ${MAX_CHECKPOINT_FILE_BYTES} bytes`,
+          );
+        }
+        proposedBlob = {
+          version: 1,
+          relativePath: target.relativePath,
+          existed: true,
+          mode: details.mode & 0o777,
+          contentBase64: content.toString("base64"),
+          sha256: createHash("sha256").update(content).digest("hex"),
+          createdAt,
+        };
+      } else {
+        proposedBlob = {
+          version: 1,
+          relativePath: target.relativePath,
+          existed: false,
+          createdAt,
+        };
+      }
+
+      const blobString = `${JSON.stringify(proposedBlob)}\n`;
+      const blobBytes = Buffer.byteLength(blobString, "utf8");
+      if (sessionBytes + blobBytes > MAX_SESSION_CHECKPOINT_BYTES) {
+        throw new Error(
+          `checkpoint session exceeds ${MAX_SESSION_CHECKPOINT_BYTES} bytes total`,
+        );
+      }
+
+      const blobPublish = await writeFileExclusiveAtomic(
+        blobPath,
+        blobString,
+        { mode: 0o600, signal: request.signal },
+      );
+      // A blob without a record is a recoverable interrupted capture. The first
+      // exclusively published blob remains authoritative.
+      const authoritativeBlob =
+        blobPublish === "created"
+          ? proposedBlob
+          : await readBlob(blobPath, request.signal);
+      if (authoritativeBlob.relativePath !== target.relativePath) {
+        throw new Error("checkpoint collision: relativePath mismatch");
+      }
+      const record = recordFromBlob(authoritativeBlob);
+      validateRecordBlob(record, authoritativeBlob);
+
+      await writeFileAtomic(
+        recordPath,
+        `${JSON.stringify(record)}\n`,
+        { mode: 0o600, signal: request.signal },
+      );
+    } finally {
+      unlock();
     }
   }
 

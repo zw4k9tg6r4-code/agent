@@ -19,6 +19,7 @@ import {
   NodeProjectContextLoader,
   type ProjectContextLoader,
 } from "./context.js";
+import { AgentCoreError } from "./errors.js";
 import { loadSessionSnapshot, type SessionSnapshot } from "./history.js";
 import { runModelLoop } from "./model-loop.js";
 
@@ -44,16 +45,6 @@ export interface AgentCoreOptions {
 export interface AgentCoreRuntime {
   readonly contextLoader: ProjectContextLoader;
   readonly createId: () => string;
-}
-
-export class AgentCoreError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "AgentCoreError";
-    this.code = code;
-  }
 }
 
 class TurnTimeoutError extends Error {

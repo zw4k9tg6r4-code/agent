@@ -1,9 +1,9 @@
 export {
   createAgentRunner,
-  AgentCoreError,
   type AgentCoreOptions,
   type AgentCoreRuntime,
 } from "./agent-runner.js";
+export { AgentCoreError } from "./errors.js";
 export {
   compactModelMessages,
   ContextError,

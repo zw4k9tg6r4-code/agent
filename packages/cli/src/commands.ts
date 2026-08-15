@@ -70,11 +70,13 @@ async function runOneShot(
   });
   const code = reportTurn(turn, context.io);
   if (code !== null) {
-    const type = code === EXIT_CODES.cancelled ? "session_cancelled" : "session_failed";
-    await context.sessions.append(turn.sessionId, type === "session_failed"
-      ? { type, code: turn.error?.code ?? "unknown", message: turn.error?.message ?? "Unknown error" }
-      : { type, reason: "user_cancelled" }
-    );
+    if (turn.error !== undefined && turn.error.code !== "turn_cancelled" && !context.signal.aborted) {
+      await context.sessions.append(turn.sessionId, {
+        type: "session_failed",
+        code: turn.error.code,
+        message: turn.error.message,
+      }).catch(() => {});
+    }
     return code;
   }
   return finish(turn.sessionId, runner, context);
@@ -207,12 +209,6 @@ async function interactiveLoop(
       });
       const code = reportTurn(resumed, context.io);
       if (code !== null) {
-        const type = code === EXIT_CODES.cancelled ? "session_cancelled" : "session_failed";
-        await context.sessions.append(item.sessionId, type === "session_failed"
-          ? { type, code: resumed.error?.code ?? "unknown", message: resumed.error?.message ?? "Unknown error" }
-          : { type, reason: "user_cancelled" },
-          token
-        );
         return code;
       }
       sessionId = resumed.sessionId;
@@ -253,12 +249,6 @@ async function interactiveLoop(
         });
     const code = reportTurn(turn, context.io);
     if (code !== null) {
-      const type = code === EXIT_CODES.cancelled ? "session_cancelled" : "session_failed";
-      await context.sessions.append(turn.sessionId, type === "session_failed"
-        ? { type, code: turn.error?.code ?? "unknown", message: turn.error?.message ?? "Unknown error" }
-        : { type, reason: "user_cancelled" },
-        token
-      );
       return code;
     }
     sessionId = turn.sessionId;

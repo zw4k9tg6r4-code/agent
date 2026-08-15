@@ -1,10 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+const setupPath = fileURLToPath(new URL("./vitest.setup.ts", import.meta.url));
 
 export default defineConfig({
   test: {
     environment: "node",
-    setupFiles: ["vitest.setup.ts"],
-    include: ["packages/**/test/**/*.test.ts", "tests/**/*.test.ts"],
+    setupFiles: [setupPath],
+    include: ["packages/**/test/**/*.test.ts", "test/**/*.test.ts", "tests/**/*.test.ts"],
     passWithNoTests: false,
     coverage: {
       provider: "v8",
@@ -13,10 +16,10 @@ export default defineConfig({
         "packages/**/src/**/*.ts",
       ],
       thresholds: {
-        statements: 75,
-        branches: 65,
-        functions: 80,
-        lines: 75,
+        statements: 80,
+        branches: 72,
+        functions: 85,
+        lines: 80,
         "packages/tools/src/workspace-path.ts": { lines: 90, branches: 90 },
         "packages/cli/src/session-store.ts": { lines: 75, branches: 65 },
         "packages/providers/src/sse.ts": { lines: 95, branches: 85 },

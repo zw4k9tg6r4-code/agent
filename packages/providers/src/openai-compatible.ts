@@ -61,21 +61,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Redacts an API key from a message using a flexible token-based approach.
- * Handles URL-encoded, partially masked, and literal appearances of the key.
- */
 function redactApiKey(message: string, apiKey: string): string {
   if (apiKey.length === 0) return message;
-  // Literal replacement
   let result = message.replaceAll(apiKey, "[REDACTED]");
-  // URL-encoded replacement (e.g. %20 encoded chars)
   const urlEncoded = encodeURIComponent(apiKey);
   if (urlEncoded !== apiKey) {
     result = result.replaceAll(urlEncoded, "[REDACTED]");
+    const pattern = urlEncoded.replace(/%[0-9a-fA-F]{2}/g, (match) => {
+      const hex = match.slice(1);
+      return `%[${hex.toLowerCase()}${hex.toUpperCase()}]`;
+    });
+    try {
+      result = result.replace(new RegExp(pattern, "g"), "[REDACTED]");
+    } catch {
+      // ignore regex construction failures
+    }
   }
-  // Bearer token pattern: "Bearer <token>"
   const bearerPattern = /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gu;
   result = result.replace(bearerPattern, "Bearer [REDACTED]");
+  const skPattern = /\bsk-[A-Za-z0-9_-]{8,}\b/g;
+  result = result.replace(skPattern, "[REDACTED]");
   return result;
 }
 
@@ -149,11 +154,12 @@ function validateConfig(
   }
   if (
     !Number.isInteger(config.requestTimeoutMs) ||
-    config.requestTimeoutMs < 1
+    config.requestTimeoutMs < 1 ||
+    config.requestTimeoutMs > 2_147_483_647
   ) {
     throw new OpenAICompatibleError(
       "invalid_provider_config",
-      "requestTimeoutMs must be a positive integer.",
+      "requestTimeoutMs must be an integer between 1 and 2147483647.",
       false,
     );
   }
@@ -380,18 +386,21 @@ async function httpError(
   if (response.body) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let remainingBytes = 4_096;
     try {
-      while (text.length < 4_096) {
+      while (remainingBytes > 0) {
         const { done, value } = await reader.read();
         if (done) break;
-        text += decoder.decode(value, { stream: true });
+        const chunk = value.byteLength > remainingBytes ? value.subarray(0, remainingBytes) : value;
+        remainingBytes -= chunk.byteLength;
+        text += decoder.decode(chunk, { stream: remainingBytes > 0 });
       }
     } catch {
       // Ignore stream errors during error reading
     } finally {
-      reader.cancel().catch(() => {});
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
-    text = text.slice(0, 4_096);
   } else {
     text = (await response.text()).slice(0, 4_096);
   }

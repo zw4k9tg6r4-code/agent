@@ -676,8 +676,8 @@ function validateHistory(
     }
 
     if (
-      event.type === "turn_completed" || 
-      event.type === "turn_failed" || 
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
       event.type === "turn_cancelled"
     ) {
       if (
@@ -886,15 +886,28 @@ export class JsonlSessionEventStore implements SessionEventStore {
       sequence: (last?.sequence ?? 0) + 1,
       at: this.#now().toISOString(),
     };
+    validateEventPayload(
+      event as unknown as Record<string, unknown>,
+      event.type,
+      sessionId,
+      event.sequence,
+    );
     validateHistory(sessionId, [...state.events, event]);
+    const separator =
+      state.repairOffset === null && state.needsSeparator ? "\n" : "";
+    const serialized = `${separator}${JSON.stringify(event)}\n`;
+    const serializedBytes = Buffer.byteLength(serialized, "utf8");
+    const currentSize = state.repairOffset ?? (await stat(path).then((s) => s.size).catch(() => 0));
+    if (currentSize + serializedBytes > 100_000_000) {
+      throw new CliError(
+        "DATA_ERROR",
+        EXIT_CODES.runtimeFailure,
+        `session file exceeds 100MB limit: ${sessionId}`,
+      );
+    }
     const append = await open(path, "a", 0o600);
     try {
-      const separator =
-        state.repairOffset === null && state.needsSeparator ? "\n" : "";
-      await append.writeFile(
-        `${separator}${JSON.stringify(event)}\n`,
-        "utf8",
-      );
+      await append.writeFile(serialized, "utf8");
       await append.sync();
     } finally {
       await append.close();
@@ -1077,19 +1090,19 @@ export class JsonlSessionEventStore implements SessionEventStore {
   }
 
   async #removeDeadLock(path: string): Promise<boolean> {
-    const tempPath = `${path}.${randomUUID()}.tmp`;
+    let raw: string;
     try {
-      await rename(path, tempPath);
+      raw = await readFile(path, "utf8");
     } catch (error) {
       if (hasCode(error, "ENOENT")) return true;
-      throw error;
+      return false;
     }
 
     let value: unknown;
     try {
-      value = JSON.parse(await readFile(tempPath, "utf8")) as unknown;
-    } catch (error) {
-      await unlink(tempPath).catch(() => {});
+      value = JSON.parse(raw);
+    } catch {
+      await unlink(path).catch(() => {});
       return true;
     }
 
@@ -1098,16 +1111,10 @@ export class JsonlSessionEventStore implements SessionEventStore {
       && Number.isInteger(value["pid"])
       && processIsAlive(value["pid"] as number)
     ) {
-      try {
-        await link(tempPath, path);
-      } catch (linkError) {
-        // Someone else grabbed the lock in the meantime, their lock wins.
-      }
-      await unlink(tempPath).catch(() => {});
       return false;
     }
 
-    await unlink(tempPath).catch(() => {});
+    await unlink(path).catch(() => {});
     return true;
   }
 

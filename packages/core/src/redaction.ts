@@ -23,31 +23,40 @@ function sanitizeString(value: string): string {
     .replace(OPENAI_STYLE_SECRET, "[REDACTED]");
 }
 
-function sanitizeValue(value: JsonValue): JsonValue {
+function sanitizeValue(
+  value: JsonValue,
+  visited: WeakSet<object>,
+  depth: number,
+): JsonValue {
   if (typeof value === "string") {
     return sanitizeString(value);
   }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (visited.has(value) || depth > 32) {
+    return "[REDACTED]";
+  }
+  visited.add(value);
   if (Array.isArray(value)) {
-    return value.map(sanitizeValue);
+    return value.map((item) => sanitizeValue(item, visited, depth + 1));
   }
-  if (typeof value === "object" && value !== null) {
-    return sanitizeObject(value as JsonObject);
+  const result: Record<string, JsonValue> = {};
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = sanitizeValue(item, visited, depth + 1);
   }
-  return value;
+  return result as JsonObject;
 }
 
 function sanitizeObject(value: JsonObject): JsonObject {
-  return Object.fromEntries(
-    Object.entries(value).map(
-      ([key, item]) => [key, sanitizeValue(item)],
-    ),
-  );
+  const visited = new WeakSet<object>();
+  return sanitizeValue(value, visited, 1) as JsonObject;
 }
 
 export function sanitizeToolResult(result: ToolResult): ToolResult {
   const common = {
     toolCallId: result.toolCallId,
-    output: sanitizeString(result.output),
+    output: typeof result.output === "string" ? sanitizeString(result.output) : "",
     ...(result.metadata === undefined
       ? {}
       : { metadata: sanitizeObject(result.metadata) }),
@@ -59,7 +68,7 @@ export function sanitizeToolResult(result: ToolResult): ToolResult {
         ok: false,
         error: {
           ...result.error,
-          message: sanitizeString(result.error.message),
+          message: sanitizeString(result.error?.message ?? ""),
         },
       };
 }
