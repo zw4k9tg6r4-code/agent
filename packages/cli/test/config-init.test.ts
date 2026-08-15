@@ -16,6 +16,7 @@ import {
   EXIT_CODES,
   initializeWorkspace,
   loadAgentConfig,
+  loadProviderProfile,
   parseAgentConfig,
   resolveApiKey,
 } from "../src/index.js";
@@ -116,4 +117,102 @@ describe("configuration and init", () => {
       ),
     );
   });
+
+  it("validates skill names and limits", () => {
+    const valid = parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      skills: ["review", "test.v1", "build-step_1"],
+    });
+    expect(valid.skills).toEqual(["review", "test.v1", "build-step_1"]);
+
+    expect(() => parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      skills: ["invalid skill with spaces"],
+    })).toThrowError(/skills\[0\]/);
+
+    expect(() => parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      skills: Array.from({ length: 51 }, (_, i) => `skill${i}`),
+    })).toThrowError(/skills array length exceeds maximum limit/);
+  });
+
+  it("validates numerical limit ceilings", () => {
+    expect(() => parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      limits: { ...DEFAULT_CONFIG.limits, maxSteps: 10001 },
+    })).toThrowError(/limits.maxSteps/);
+
+    expect(() => parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      limits: { ...DEFAULT_CONFIG.limits, maxContextTokens: 3000000 },
+    })).toThrowError(/limits.maxContextTokens/);
+
+    expect(() => parseAgentConfig({
+      ...DEFAULT_CONFIG,
+      limits: { ...DEFAULT_CONFIG.limits, timeoutMs: 90000000 },
+    })).toThrowError(/limits.timeoutMs/);
+  });
+
+  it("loads provider profile supporting both v1 and v2 formats", async () => {
+    const testHome = await workspace();
+    const agentHome = join(testHome, ".gemini", "agent");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(agentHome, { recursive: true });
+
+    const originalHome = process.env["AGENT_HOME"];
+    process.env["AGENT_HOME"] = testHome;
+
+    try {
+      // Test v2 format
+      await writeFile(
+        join(agentHome, "profiles.json"),
+        JSON.stringify({
+          default: {
+            baseUrl: "https://api.openai.com/v1",
+            apiKeyEnv: "OPENAI_API_KEY",
+          },
+          anthropic: {
+            baseUrl: "https://api.anthropic.com/v1",
+            apiKeyEnv: "ANTHROPIC_API_KEY",
+          },
+        }),
+      );
+
+      const profile = await loadProviderProfile("default");
+      expect(profile).toEqual({
+        baseUrl: "https://api.openai.com/v1",
+        apiKeyEnv: "OPENAI_API_KEY",
+      });
+
+      const anthropicProfile = await loadProviderProfile("anthropic");
+      expect(anthropicProfile).toEqual({
+        baseUrl: "https://api.anthropic.com/v1",
+        apiKeyEnv: "ANTHROPIC_API_KEY",
+      });
+
+      await expect(loadProviderProfile("nonexistent")).rejects.toThrow(CliError);
+
+      // Test v1 legacy flat format
+      await writeFile(
+        join(agentHome, "profiles.json"),
+        JSON.stringify({
+          baseUrl: "https://api.openai.com/v1",
+          apiKeyEnv: "OPENAI_API_KEY",
+        }),
+      );
+
+      const legacyProfile = await loadProviderProfile("default");
+      expect(legacyProfile).toEqual({
+        baseUrl: "https://api.openai.com/v1",
+        apiKeyEnv: "OPENAI_API_KEY",
+      });
+    } finally {
+      if (originalHome !== undefined) {
+        process.env["AGENT_HOME"] = originalHome;
+      } else {
+        delete process.env["AGENT_HOME"];
+      }
+    }
+  });
 });
+

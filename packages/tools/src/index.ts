@@ -29,6 +29,7 @@ export {
   runFilePatch,
 } from "./file-patch.js";
 export {
+  assertResolvedExecutable,
   ExecutablePathError,
   resolveExecutable,
   type ExecutablePathErrorCode,
