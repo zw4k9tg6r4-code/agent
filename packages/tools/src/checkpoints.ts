@@ -22,7 +22,7 @@ import {
   writeFileAtomic,
   writeFileExclusiveAtomic,
 } from "./atomic-file.js";
-import { checkpointLock } from "./mutex.js";
+import { checkpointLock, workspaceLock } from "./mutex.js";
 import {
   isProtectedWorkspacePath,
   resolveWorkspacePath,
@@ -81,7 +81,7 @@ function comparable(value: string): string {
 }
 
 function isContained(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
+  const relative = path.relative(comparable(root), comparable(candidate));
   return (
     relative === "" ||
     (relative !== ".." &&
@@ -502,18 +502,20 @@ export class FileCheckpointStore implements CheckpointStore {
   async restore(
     request: CheckpointRestoreRequest,
   ): Promise<CheckpointRestoreResult> {
-    validateSessionId(request.sessionId);
-    const workspace = await resolveWorkspacePath(
-      request.workspaceRoot,
-      ".",
-    );
-    const directory = await checkpointDirectory(
-      workspace.workspaceRoot,
-      request.sessionId,
-    );
-    const records = await readRecords(directory, request.signal);
-    const restoredPaths: string[] = [];
-    const removedPaths: string[] = [];
+    const unlockWorkspace = await workspaceLock.acquire();
+    try {
+      validateSessionId(request.sessionId);
+      const workspace = await resolveWorkspacePath(
+        request.workspaceRoot,
+        ".",
+      );
+      const directory = await checkpointDirectory(
+        workspace.workspaceRoot,
+        request.sessionId,
+      );
+      const records = await readRecords(directory, request.signal);
+      const restoredPaths: string[] = [];
+      const removedPaths: string[] = [];
 
     for (const record of records) {
       if (request.signal.aborted) {
@@ -601,9 +603,12 @@ export class FileCheckpointStore implements CheckpointStore {
       }
     }
 
-    return {
-      restoredPaths,
-      removedPaths,
-    };
+      return {
+        restoredPaths,
+        removedPaths,
+      };
+    } finally {
+      unlockWorkspace();
+    }
   }
 }

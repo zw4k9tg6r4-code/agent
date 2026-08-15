@@ -72,8 +72,12 @@ export interface ResolvedWorkspacePath {
   readonly sensitive: boolean;
 }
 
+function comparable(value: string): string {
+  return path.normalize(value).toLowerCase();
+}
+
 function isContained(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
+  const relative = path.relative(comparable(root), comparable(candidate));
   return (
     relative === "" ||
     (relative !== ".." &&
