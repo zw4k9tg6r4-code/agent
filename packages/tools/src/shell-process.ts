@@ -337,7 +337,9 @@ export async function executeProcess(
         return;
       }
       terminationStarted = true;
-      void terminateProcessTree(child).then((terminated) => {
+      void terminateProcessTree(child)
+        .catch(() => false)
+        .then((terminated) => {
         if (!terminated) {
           terminationFailed = true;
           finish(child.exitCode, child.signalCode);
