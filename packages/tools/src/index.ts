@@ -9,6 +9,7 @@ export {
 export {
   isProtectedWorkspacePath,
   isSensitiveRelativePath,
+  normalizeForComparison,
   resolveWorkspacePath,
   WorkspacePathError,
   type ResolvedWorkspacePath,
@@ -36,6 +37,8 @@ export {
   type ResolvedExecutable,
 } from "./executable-path.js";
 export {
+  isNodeEvalArgument,
+  MAX_ARGUMENTS,
   runShellExecute,
   SHELL_EXECUTE_OUTPUT_LIMIT_BYTES,
 } from "./shell-execute.js";

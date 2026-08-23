@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   isSensitiveRelativePath,
   isProtectedWorkspacePath,
+  normalizeForComparison,
   resolveWorkspacePath,
   WorkspacePathError,
 } from "../src/index.js";
@@ -145,4 +146,24 @@ describe("resolveWorkspacePath", () => {
       }
     },
   );
+});
+
+describe("normalizeForComparison", () => {
+  it("folds case only when requested", () => {
+    expect(normalizeForComparison("/home/Workspace/File.TXT", true)).toBe(
+      path.normalize("/home/workspace/file.txt"),
+    );
+    expect(normalizeForComparison("/home/Workspace/File.TXT", false)).toBe(
+      path.normalize("/home/Workspace/File.TXT"),
+    );
+  });
+
+  it("keeps case-variant siblings distinct exactly when folding is off", () => {
+    expect(normalizeForComparison("/home/Workspace", false)).not.toBe(
+      normalizeForComparison("/home/workspace", false),
+    );
+    expect(normalizeForComparison("/home/Workspace", true)).toBe(
+      normalizeForComparison("/home/workspace", true),
+    );
+  });
 });

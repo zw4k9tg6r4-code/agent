@@ -124,7 +124,7 @@ describe("executeCli", () => {
 
     const running = executeCli(["run", "wait"], {
       workspaceRoot,
-      environment: { OPENAI_API_KEY: "sk-fake-only" },
+      environment: { OPENAI_API_KEY: "fake-only-key" },
       io,
       runtimeFactory: new FakeRuntimeFactory(runner),
       signalSource: signal.source,
@@ -147,7 +147,7 @@ describe("executeCli", () => {
 
     const code = await executeCli(["run", "inspect"], {
       workspaceRoot,
-      environment: { OPENAI_API_KEY: "sk-fake-only" },
+      environment: { OPENAI_API_KEY: "fake-only-key" },
       io,
       runtimeFactory,
       signalSource: signals().source,

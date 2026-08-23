@@ -274,6 +274,9 @@ export async function runNonInteractiveCommand(
         ? `Initialized ${initialized.configPath}\n`
         : `Already initialized ${initialized.configPath}\n`,
     );
+    if (initialized.profilesWarning !== undefined) {
+      context.io.writeError(`Warning: ${initialized.profilesWarning}\n`);
+    }
     return EXIT_CODES.success;
   }
   if (command.kind === "sessions") return listSessions(context);

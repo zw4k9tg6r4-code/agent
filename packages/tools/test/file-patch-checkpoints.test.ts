@@ -145,6 +145,37 @@ describe("runFilePatch and FileCheckpointStore", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("treats undo of an already deleted created file as idempotent", async () => {
+    const created = await runFilePatch(
+      call({
+        path: "created.md",
+        create: true,
+        content: "# created\n",
+      }),
+      context(),
+    );
+    expect(created.ok).toBe(true);
+    const newSha256 = created.ok ? created.metadata?.["newSha256"] : undefined;
+    expect(typeof newSha256).toBe("string");
+
+    await unlink(path.join(workspace, "created.md"));
+
+    const restored = await checkpoints.restore({
+      sessionId: "session-patch",
+      workspaceRoot: workspace,
+      signal: new AbortController().signal,
+      expectedHashes: new Map([["created.md", newSha256 as string]]),
+    });
+
+    expect(restored).toEqual({
+      restoredPaths: [],
+      removedPaths: [],
+    });
+    await expect(
+      readFile(path.join(workspace, "created.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("does not write when optimistic context is stale", async () => {
     const result = await runFilePatch(
       call({

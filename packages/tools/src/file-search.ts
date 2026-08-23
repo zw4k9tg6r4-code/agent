@@ -121,10 +121,17 @@ function matcherFor(input: SearchInput): RegExp {
   return new RegExp(source, input.caseSensitive ? "u" : "iu");
 }
 
+function isENOENT(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
 async function collectFiles(
   absolutePath: string,
   relativePath: string,
-  workspaceRoot: string,
   signal: AbortSignal,
   budget: SearchBudget,
 ): Promise<readonly { absolutePath: string; relativePath: string }[]> {
@@ -149,6 +156,9 @@ async function collectFiles(
     if (signal.aborted) {
       throw new DOMException("search cancelled", "AbortError");
     }
+    // Directory entries are real names from the filesystem and symlinks are
+    // skipped, so joining onto the already-canonical start path can never
+    // escape the workspace; no per-entry canonicalization is needed.
     if (
       entry.isSymbolicLink() ||
       SKIPPED_DIRECTORIES.has(entry.name.toLowerCase())
@@ -163,35 +173,30 @@ async function collectFiles(
     ) {
       continue;
     }
-    const child = await resolveWorkspacePath(workspaceRoot, childRelative, {
-      rejectSensitive: true,
-    }).catch((error: unknown) => {
-      if (error instanceof WorkspacePathError) {
-        return undefined;
-      }
-      throw error;
-    });
-    if (child === undefined) {
-      continue;
-    }
+    const childAbsolute = path.join(absolutePath, entry.name);
 
-    if (entry.isDirectory()) {
-      files.push(
-        ...(await collectFiles(
-          child.absolutePath,
-          child.relativePath,
-          workspaceRoot,
-          signal,
-          budget,
-        )),
-      );
-    } else if (entry.isFile()) {
-      const childDetails = await stat(child.absolutePath);
-      accountSearchFile(budget, childDetails.size);
-      files.push({
-        absolutePath: child.absolutePath,
-        relativePath: child.relativePath,
-      });
+    try {
+      if (entry.isDirectory()) {
+        files.push(
+          ...(await collectFiles(
+            childAbsolute,
+            childRelative,
+            signal,
+            budget,
+          )),
+        );
+      } else if (entry.isFile()) {
+        const childDetails = await stat(childAbsolute);
+        accountSearchFile(budget, childDetails.size);
+        files.push({
+          absolutePath: childAbsolute,
+          relativePath: childRelative,
+        });
+      }
+    } catch (error) {
+      if (!isENOENT(error)) {
+        throw error;
+      }
     }
   }
 
@@ -265,7 +270,6 @@ export async function runFileSearch(
     const files = await collectFiles(
       start.absolutePath,
       start.relativePath,
-      start.workspaceRoot,
       context.signal,
       budget,
     );

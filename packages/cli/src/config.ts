@@ -17,6 +17,7 @@ export interface OpenAICompatibleConfig {
   readonly model: string;
   readonly requestTimeoutMs: number;
   readonly maxRetries: number;
+  readonly maxTokensField?: "max_tokens" | "max_completion_tokens";
 }
 
 export interface AgentConfig {
@@ -84,6 +85,19 @@ function retryCount(value: unknown): number {
   if (value === undefined) return 2;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 2) {
     throw configError("provider.maxRetries must be an integer from 0 through 2");
+  }
+  return value;
+}
+
+function maxTokensField(value: unknown): "max_tokens" | "max_completion_tokens" | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value !== "max_tokens" &&
+    value !== "max_completion_tokens"
+  ) {
+    throw configError(
+      'provider.maxTokensField must be "max_tokens" or "max_completion_tokens"',
+    );
   }
   return value;
 }
@@ -157,6 +171,7 @@ export function parseAgentConfig(value: unknown): AgentConfig {
   } else {
     profileId = profileIdString(provider["profileId"], "provider.profileId");
   }
+  const maxTokensFieldValue = maxTokensField(provider["maxTokensField"]);
 
   return {
     version: version as 1 | 2,
@@ -169,6 +184,9 @@ export function parseAgentConfig(value: unknown): AgentConfig {
         "provider.requestTimeoutMs",
       ),
       maxRetries: retryCount(provider["maxRetries"]),
+      ...(maxTokensFieldValue === undefined
+        ? {}
+        : { maxTokensField: maxTokensFieldValue }),
     },
     permissionMode: mode,
     limits: parsedLimits,
@@ -242,32 +260,52 @@ export interface ProviderProfile {
   readonly apiKeyEnv: string;
 }
 
+function providerProfilePaths(baseDir: string): readonly string[] {
+  return [
+    join(baseDir, ".agent", "profiles.json"),
+    // Legacy location from earlier builds; kept readable so existing
+    // setups keep working until they rerun "agent init".
+    join(baseDir, ".gemini", "agent", "profiles.json"),
+  ];
+}
+
+function isENOENT(error: unknown): boolean {
+  return (
+    typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code: string }).code === "ENOENT"
+  );
+}
+
 export async function loadProviderProfile(
   profileId: string,
 ): Promise<ProviderProfile> {
   const baseDir = (process.env["AGENT_HOME"] ?? homedir());
-  const path = join(baseDir, ".gemini", "agent", "profiles.json");
-  let raw: string;
-  try {
-    const st = await stat(path);
-    if (st.size > 1_000_000) {
-      throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `profiles file exceeds 1MB limit: ${path}`);
+  const candidates = providerProfilePaths(baseDir);
+  let path: string | undefined;
+  let raw: string | undefined;
+  for (const candidate of candidates) {
+    try {
+      const st = await stat(candidate);
+      if (st.size > 1_000_000) {
+        throw new CliError("CONFIG_ERROR", EXIT_CODES.usageOrConfig, `profiles file exceeds 1MB limit: ${candidate}`);
+      }
+      raw = await readFile(candidate, "utf8");
+      path = candidate;
+      break;
+    } catch (error) {
+      if (!isENOENT(error)) {
+        throw error;
+      }
     }
-    raw = await readFile(path, "utf8");
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code: string }).code === "ENOENT"
-    ) {
-      throw new CliError(
-        "CONFIG_ERROR",
-        EXIT_CODES.usageOrConfig,
-        `missing ${path}; please configure your provider profiles`,
-      );
-    }
-    throw error;
+  }
+  if (raw === undefined || path === undefined) {
+    throw new CliError(
+      "CONFIG_ERROR",
+      EXIT_CODES.usageOrConfig,
+      `missing ${candidates[0]}; please configure your provider profiles`,
+    );
   }
 
   let parsed: unknown;

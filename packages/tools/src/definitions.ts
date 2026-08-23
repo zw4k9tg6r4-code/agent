@@ -3,7 +3,10 @@ import type { ToolDefinition } from "@agent/contracts";
 import { FILE_PATCH_OUTPUT_LIMIT_BYTES } from "./file-patch.js";
 import { FILE_READ_OUTPUT_LIMIT_BYTES } from "./file-read.js";
 import { FILE_SEARCH_OUTPUT_LIMIT_BYTES } from "./file-search.js";
-import { SHELL_EXECUTE_OUTPUT_LIMIT_BYTES } from "./shell-execute.js";
+import {
+  MAX_ARGUMENTS,
+  SHELL_EXECUTE_OUTPUT_LIMIT_BYTES,
+} from "./shell-execute.js";
 
 export const FILE_READ_DEFINITION = {
   name: "file_read",
@@ -133,7 +136,7 @@ export const SHELL_EXECUTE_DEFINITION = {
       args: {
         type: "array",
         items: { type: "string" },
-        maxItems: 1024,
+        maxItems: MAX_ARGUMENTS,
       },
       cwd: { type: "string", minLength: 1 },
       timeoutMs: {

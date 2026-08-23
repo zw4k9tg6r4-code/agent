@@ -50,7 +50,7 @@ describe("non-interactive commands", () => {
       { kind: "run", task: "inspect this repository" },
       {
         workspaceRoot: root,
-        environment: { OPENAI_API_KEY: "sk-fake-only" },
+        environment: { OPENAI_API_KEY: "fake-only-key" },
         io,
         sessions,
         runtimeFactory,
@@ -79,7 +79,7 @@ describe("non-interactive commands", () => {
     }]);
     expect(io.output.join("")).toContain("Inspected.");
     expect(io.output.join("")).toContain("Task completed.");
-    expect(io.output.join("")).not.toContain("sk-fake-only");
+    expect(io.output.join("")).not.toContain("fake-only-key");
   });
 
   it.each([
@@ -103,7 +103,7 @@ describe("non-interactive commands", () => {
       { kind: "run", task: "inspect" },
       {
         workspaceRoot: root,
-        environment: { OPENAI_API_KEY: "sk-fake-only" },
+        environment: { OPENAI_API_KEY: "fake-only-key" },
         io,
         sessions,
         runtimeFactory: new FakeRuntimeFactory(runner),

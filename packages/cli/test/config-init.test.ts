@@ -153,17 +153,19 @@ describe("configuration and init", () => {
     })).toThrowError(/limits.timeoutMs/);
   });
 
-  it("loads provider profile supporting both v1 and v2 formats", async () => {
+  it("loads provider profile from the new location and the legacy fallback", async () => {
     const testHome = await workspace();
-    const agentHome = join(testHome, ".gemini", "agent");
+    const agentHome = join(testHome, ".agent");
+    const legacyHome = join(testHome, ".gemini", "agent");
     const { mkdir } = await import("node:fs/promises");
     await mkdir(agentHome, { recursive: true });
+    await mkdir(legacyHome, { recursive: true });
 
     const originalHome = process.env["AGENT_HOME"];
     process.env["AGENT_HOME"] = testHome;
 
     try {
-      // Test v2 format
+      // New location takes precedence when both exist.
       await writeFile(
         join(agentHome, "profiles.json"),
         JSON.stringify({
@@ -174,6 +176,15 @@ describe("configuration and init", () => {
           anthropic: {
             baseUrl: "https://api.anthropic.com/v1",
             apiKeyEnv: "ANTHROPIC_API_KEY",
+          },
+        }),
+      );
+      await writeFile(
+        join(legacyHome, "profiles.json"),
+        JSON.stringify({
+          default: {
+            baseUrl: "https://legacy.example.com/v1",
+            apiKeyEnv: "LEGACY_API_KEY",
           },
         }),
       );
@@ -192,17 +203,26 @@ describe("configuration and init", () => {
 
       await expect(loadProviderProfile("nonexistent")).rejects.toThrow(CliError);
 
-      // Test v1 legacy flat format
+      // Removing the new location falls back to the legacy file.
+      const { rm } = await import("node:fs/promises");
+      await rm(join(agentHome, "profiles.json"));
+      const legacyProfile = await loadProviderProfile("default");
+      expect(legacyProfile).toEqual({
+        baseUrl: "https://legacy.example.com/v1",
+        apiKeyEnv: "LEGACY_API_KEY",
+      });
+
+      // The legacy file still supports the v1 flat format.
       await writeFile(
-        join(agentHome, "profiles.json"),
+        join(legacyHome, "profiles.json"),
         JSON.stringify({
           baseUrl: "https://api.openai.com/v1",
           apiKeyEnv: "OPENAI_API_KEY",
         }),
       );
 
-      const legacyProfile = await loadProviderProfile("default");
-      expect(legacyProfile).toEqual({
+      const flatProfile = await loadProviderProfile("default");
+      expect(flatProfile).toEqual({
         baseUrl: "https://api.openai.com/v1",
         apiKeyEnv: "OPENAI_API_KEY",
       });

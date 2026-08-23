@@ -52,7 +52,7 @@ describe("interactive mode", () => {
       { kind: "interactive" },
       {
         workspaceRoot: root,
-        environment: { OPENAI_API_KEY: "sk-fake-only" },
+        environment: { OPENAI_API_KEY: "fake-only-key" },
         io,
         sessions,
         runtimeFactory: new FakeRuntimeFactory(runner),
@@ -159,7 +159,7 @@ describe("resume", () => {
       { kind: "resume", sessionId: "session-resume" },
       {
         workspaceRoot: root,
-        environment: { OPENAI_API_KEY: "sk-fake-only" },
+        environment: { OPENAI_API_KEY: "fake-only-key" },
         io,
         sessions,
         runtimeFactory: new FakeRuntimeFactory(runner),
@@ -223,7 +223,7 @@ describe("resume", () => {
       { kind: "resume", sessionId: "session-ready" },
       {
         workspaceRoot: root,
-        environment: { OPENAI_API_KEY: "sk-fake-only" },
+        environment: { OPENAI_API_KEY: "fake-only-key" },
         io,
         sessions,
         runtimeFactory: new FakeRuntimeFactory(runner),
@@ -312,7 +312,7 @@ describe("resume", () => {
       { kind: "resume", sessionId: "session-pending" },
       {
         workspaceRoot: root,
-        environment: { OPENAI_API_KEY: "sk-fake-only" },
+        environment: { OPENAI_API_KEY: "fake-only-key" },
         io: new FakeIO(["/exit"]),
         sessions,
         runtimeFactory: new FakeRuntimeFactory(runner),
@@ -356,7 +356,7 @@ describe("resume", () => {
         { kind: "resume", sessionId: "session-done" },
         {
           workspaceRoot: root,
-          environment: { OPENAI_API_KEY: "sk-fake-only" },
+          environment: { OPENAI_API_KEY: "fake-only-key" },
           io: new FakeIO(),
           sessions,
           runtimeFactory: factory,

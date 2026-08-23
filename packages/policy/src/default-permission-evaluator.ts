@@ -209,10 +209,6 @@ type ExecutableResolver = (
   workspaceRoot: string,
 ) => Promise<ResolvedExecutable>;
 
-export interface DefaultPermissionEvaluatorOptions {
-  readonly resolveExecutable?: ExecutableResolver;
-}
-
 function processArguments(value: unknown): readonly string[] {
   if (value === undefined) return [];
   if (

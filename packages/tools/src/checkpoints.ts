@@ -24,7 +24,9 @@ import {
 } from "./atomic-file.js";
 import { checkpointLock, workspaceLock } from "./mutex.js";
 import {
+  CASE_INSENSITIVE_PLATFORM,
   isProtectedWorkspacePath,
+  normalizeForComparison,
   resolveWorkspacePath,
   WorkspacePathError,
 } from "./workspace-path.js";
@@ -76,8 +78,10 @@ function blobNameFor(relativePath: string): string {
   return `${recordStem(relativePath)}.blob.json`;
 }
 
+// Match workspace-path containment semantics: fold case only on filesystems
+// that are case-insensitive by default.
 function comparable(value: string): string {
-  return path.normalize(value).toLowerCase();
+  return normalizeForComparison(value, CASE_INSENSITIVE_PLATFORM);
 }
 
 function isContained(root: string, candidate: string): boolean {
@@ -371,6 +375,44 @@ async function readRecords(
   return records;
 }
 
+interface PlannedRestore {
+  readonly relativePath: string;
+  readonly absolutePath: string;
+  readonly mode: number | undefined;
+  readonly content: Buffer;
+}
+
+interface PlannedRemoval {
+  readonly relativePath: string;
+  readonly absolutePath: string;
+}
+
+async function assertMatchesExpectedHash(
+  relativePath: string,
+  absolutePath: string,
+  exists: boolean,
+  existedAtCapture: boolean,
+  expectedHashes: ReadonlyMap<string, string | null> | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  if (expectedHashes === undefined) {
+    return;
+  }
+  const expectedSha256 = expectedHashes.get(relativePath);
+  if (expectedSha256 === undefined) {
+    return;
+  }
+  if (exists) {
+    const currentBytes = await readFile(absolutePath, { signal });
+    const currentSha256 = createHash("sha256").update(currentBytes).digest("hex");
+    if (currentSha256 !== expectedSha256) {
+      throw new Error(`checkpoint CAS failed: ${relativePath} was modified after capture`);
+    }
+  } else if (expectedSha256 !== null && existedAtCapture) {
+    throw new Error(`checkpoint CAS failed: ${relativePath} was deleted after capture`);
+  }
+}
+
 export class FileCheckpointStore implements CheckpointStore {
   async capture(request: CheckpointCaptureRequest): Promise<void> {
     validateSessionId(request.sessionId);
@@ -514,98 +556,111 @@ export class FileCheckpointStore implements CheckpointStore {
         request.sessionId,
       );
       const records = await readRecords(directory, request.signal);
-      const restoredPaths: string[] = [];
-      const removedPaths: string[] = [];
 
-    for (const record of records) {
-      if (request.signal.aborted) {
-        throw new DOMException("checkpoint restore cancelled", "AbortError");
-      }
-      const target = await resolveWorkspacePath(
-        workspace.workspaceRoot,
-        record.relativePath,
-        {
-          allowMissingLeaf: true,
-          rejectSensitive: true,
-        },
-      );
-      if (isProtectedWorkspacePath(target.relativePath)) {
-        throw new WorkspacePathError(
-          "SENSITIVE_PATH",
-          "Agent metadata and Git internals cannot be restore targets",
+      // Phase one validates every record, blob, and expected hash before any
+      // file is touched, so a mid-restore CAS failure cannot leave the
+      // workspace in a partially restored state.
+      const restores: PlannedRestore[] = [];
+      const removals: PlannedRemoval[] = [];
+      for (const record of records) {
+        if (request.signal.aborted) {
+          throw new DOMException("checkpoint restore cancelled", "AbortError");
+        }
+        const target = await resolveWorkspacePath(
+          workspace.workspaceRoot,
+          record.relativePath,
+          {
+            allowMissingLeaf: true,
+            rejectSensitive: true,
+          },
         );
-      }
-      if (target.relativePath !== record.relativePath) {
-        throw new Error(
-          `checkpoint target changed after capture: ${record.relativePath}`,
-        );
-      }
-
-      if (!BLOB_NAME.test(record.blobName)) {
-        throw new Error("checkpoint blob name is invalid");
-      }
-      const blob = await readBlob(
-        path.join(directory, record.blobName),
-        request.signal,
-      );
-      validateRecordBlob(record, blob);
-
-      if (record.existed) {
-        if (
-          blob.contentBase64 === undefined ||
-          record.sha256 === undefined
-        ) {
-          throw new Error("checkpoint blob metadata is missing");
+        if (isProtectedWorkspacePath(target.relativePath)) {
+          throw new WorkspacePathError(
+            "SENSITIVE_PATH",
+            "Agent metadata and Git internals cannot be restore targets",
+          );
+        }
+        if (target.relativePath !== record.relativePath) {
+          throw new Error(
+            `checkpoint target changed after capture: ${record.relativePath}`,
+          );
         }
 
-        if (request.expectedHashes !== undefined) {
-          const expectedSha256 = request.expectedHashes.get(record.relativePath);
-          if (expectedSha256 !== undefined) {
-             if (target.exists) {
-                const currentBytes = await readFile(target.absolutePath, { signal: request.signal });
-                const currentSha256 = createHash("sha256").update(currentBytes).digest("hex");
-                if (currentSha256 !== expectedSha256) {
-                   throw new Error(`checkpoint CAS failed: ${record.relativePath} was modified after capture`);
-                }
-             } else if (expectedSha256 !== null) {
-                throw new Error(`checkpoint CAS failed: ${record.relativePath} was deleted after capture`);
-             }
+        if (!BLOB_NAME.test(record.blobName)) {
+          throw new Error("checkpoint blob name is invalid");
+        }
+        const blob = await readBlob(
+          path.join(directory, record.blobName),
+          request.signal,
+        );
+        validateRecordBlob(record, blob);
+
+        if (record.existed) {
+          if (
+            blob.contentBase64 === undefined ||
+            record.sha256 === undefined
+          ) {
+            throw new Error("checkpoint blob metadata is missing");
           }
+          await assertMatchesExpectedHash(
+            record.relativePath,
+            target.absolutePath,
+            target.exists,
+            true,
+            request.expectedHashes,
+            request.signal,
+          );
+          const content = Buffer.from(blob.contentBase64, "base64");
+          const digest = createHash("sha256").update(content).digest("hex");
+          if (digest !== record.sha256) {
+            throw new Error(`checkpoint checksum failed: ${record.relativePath}`);
+          }
+          restores.push({
+            relativePath: record.relativePath,
+            absolutePath: target.absolutePath,
+            mode: record.mode,
+            content,
+          });
+        } else {
+          await assertMatchesExpectedHash(
+            record.relativePath,
+            target.absolutePath,
+            target.exists,
+            false,
+            request.expectedHashes,
+            request.signal,
+          );
+          // A capture that recorded the file as absent is already restored
+          // when the target is missing again; removing nothing stays a no-op.
+          if (!target.exists) {
+            continue;
+          }
+          removals.push({
+            relativePath: record.relativePath,
+            absolutePath: target.absolutePath,
+          });
         }
+      }
 
-        const content = Buffer.from(blob.contentBase64, "base64");
-        const digest = createHash("sha256").update(content).digest("hex");
-        if (digest !== record.sha256) {
-          throw new Error(`checkpoint checksum failed: ${record.relativePath}`);
+      for (const planned of restores) {
+        if (request.signal.aborted) {
+          throw new DOMException("checkpoint restore cancelled", "AbortError");
         }
-        await writeFileAtomic(target.absolutePath, content, {
-          ...(record.mode === undefined ? {} : { mode: record.mode }),
+        await writeFileAtomic(planned.absolutePath, planned.content, {
+          ...(planned.mode === undefined ? {} : { mode: planned.mode }),
           signal: request.signal,
         });
-        restoredPaths.push(record.relativePath);
-      } else {
-        if (request.expectedHashes !== undefined) {
-          const expectedSha256 = request.expectedHashes.get(record.relativePath);
-          if (expectedSha256 !== undefined) {
-             if (target.exists) {
-                const currentBytes = await readFile(target.absolutePath, { signal: request.signal });
-                const currentSha256 = createHash("sha256").update(currentBytes).digest("hex");
-                if (currentSha256 !== expectedSha256) {
-                   throw new Error(`checkpoint CAS failed: ${record.relativePath} was modified after capture`);
-                }
-             } else if (expectedSha256 !== null) {
-                throw new Error(`checkpoint CAS failed: ${record.relativePath} was deleted after capture`);
-             }
-          }
-        }
-        await rm(target.absolutePath, { force: true });
-        removedPaths.push(record.relativePath);
       }
-    }
+      for (const planned of removals) {
+        if (request.signal.aborted) {
+          throw new DOMException("checkpoint restore cancelled", "AbortError");
+        }
+        await rm(planned.absolutePath, { force: true });
+      }
 
       return {
-        restoredPaths,
-        removedPaths,
+        restoredPaths: restores.map((planned) => planned.relativePath),
+        removedPaths: removals.map((planned) => planned.relativePath),
       };
     } finally {
       unlockWorkspace();

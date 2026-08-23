@@ -57,7 +57,7 @@ describe("real production composition", () => {
   it("constructs all integrated packages without network access", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-cli-composition-"));
     const previous = process.env["OPENAI_API_KEY"];
-    process.env["OPENAI_API_KEY"] = "sk-fake-composition-only";
+    process.env["OPENAI_API_KEY"] = "fake-composition-key";
     try {
       const factory = new ProductionRuntimeFactory();
       const bundle = await factory.create({
@@ -102,7 +102,7 @@ describe("real production composition", () => {
         { kind: "run", task: "exercise the real core" },
         {
           workspaceRoot: root,
-          environment: { OPENAI_API_KEY: "sk-fake-lifecycle-only" },
+          environment: { OPENAI_API_KEY: "fake-lifecycle-key" },
           io,
           sessions,
           runtimeFactory: factory,
@@ -140,7 +140,7 @@ describe("real production composition", () => {
         { kind: "run", task: "fail through the real core" },
         {
           workspaceRoot: root,
-          environment: { OPENAI_API_KEY: "sk-fake-lifecycle-only" },
+          environment: { OPENAI_API_KEY: "fake-lifecycle-key" },
           io,
           sessions,
           runtimeFactory: factory,

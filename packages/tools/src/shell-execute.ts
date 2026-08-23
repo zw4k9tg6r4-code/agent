@@ -29,7 +29,7 @@ export const SHELL_EXECUTE_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MIN_TIMEOUT_MS = 100;
 const MAX_TIMEOUT_MS = 300_000;
-const MAX_ARGUMENTS = 128;
+export const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_LENGTH = 4_096;
 const FORBIDDEN_ARGUMENT_SYNTAX =
   /(?:&&|\|\||[|;<>`\r\n]|\$\(|(?:^|\s)&(?:\s|$))/u;
@@ -52,6 +52,24 @@ const FORBIDDEN_PROGRAMS = new Set([
   "wscript.exe",
   "zsh",
 ]);
+
+/**
+ * Matches every form of the Node eval/print flags, including the inline
+ * `--eval=code` / `--print=code` spellings, so no eval variant slips past
+ * the direct-process boundary checks.
+ */
+export function isNodeEvalArgument(argument: string): boolean {
+  return (
+    argument === "-e" ||
+    argument === "--eval" ||
+    argument === "-p" ||
+    argument === "--print" ||
+    argument.startsWith("--eval=") ||
+    argument.startsWith("--print=") ||
+    argument.startsWith("-e=") ||
+    argument.startsWith("-p=")
+  );
+}
 
 interface ShellInput {
   readonly program: string;
@@ -101,9 +119,7 @@ function parseShellInput(input: JsonObject): ShellInput {
       path.extname(basename),
     ) ||
     ((basename === "node" || basename === "node.exe") &&
-      args.some((argument) =>
-        ["-e", "--eval", "-p", "--print"].includes(argument),
-      ))
+      args.some((argument) => isNodeEvalArgument(argument)))
   ) {
     throw new TypeError(
       "shell interpreters, script wrappers, and eval flags are not accepted",

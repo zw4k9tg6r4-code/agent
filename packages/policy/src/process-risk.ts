@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import { isNodeEvalArgument } from "@agent/tools";
+
 export type ProcessImpact =
   | "read_only"
   | "local_low_risk"
@@ -130,11 +132,12 @@ export function analyzeProcess(
   const joinedArguments = args.join("/");
   const evalMode =
     (name === "node" &&
-      lowerArgs.some((argument) =>
-        ["-e", "--eval", "-p", "--print"].includes(argument),
-      )) ||
+      lowerArgs.some((argument) => isNodeEvalArgument(argument))) ||
     ((name === "python" || name === "python3") &&
-      lowerArgs.includes("-c"));
+      lowerArgs.some(
+        // Python accepts both "-c code" and the glued "-c<code>" form.
+        (argument) => argument === "-c" || (argument.startsWith("-c") && argument.length > 2),
+      ));
   const broadDelete =
     ALWAYS_DESTRUCTIVE_PROGRAMS.has(name) ||
     (DELETE_PROGRAMS.has(name) && args.some(isRootTarget));

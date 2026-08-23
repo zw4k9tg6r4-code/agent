@@ -10,15 +10,16 @@ const IGNORES = [".agent/sessions/", ".agent/checkpoints/"] as const;
 export interface InitializeResult {
   readonly configCreated: boolean;
   readonly configPath: string;
+  readonly profilesWarning?: string;
 }
 
 function hasCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && (error as any).code === code;
 }
 
-async function ensureUserProfiles(): Promise<void> {
+async function ensureUserProfiles(): Promise<string | undefined> {
   const baseDir = process.env["AGENT_HOME"] ?? homedir();
-  const dir = join(baseDir, ".gemini", "agent");
+  const dir = join(baseDir, ".agent");
   const path = join(dir, "profiles.json");
   try {
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -33,10 +34,14 @@ async function ensureUserProfiles(): Promise<void> {
       `${JSON.stringify(defaultTemplate, null, 2)}\n`,
       { encoding: "utf8", flag: "wx" },
     );
+    return undefined;
   } catch (error) {
-    if (!hasCode(error, "EEXIST")) {
-      // Ignore if cannot write to user directory
+    if (hasCode(error, "EEXIST")) {
+      return undefined;
     }
+    return `could not write ${path}: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
   }
 }
 
@@ -82,6 +87,10 @@ export async function initializeWorkspace(
     if (!hasCode(error, "EEXIST")) throw error;
   }
   await ensureIgnored(workspaceRoot);
-  await ensureUserProfiles();
-  return { configCreated, configPath };
+  const profilesWarning = await ensureUserProfiles();
+  return {
+    configCreated,
+    configPath,
+    ...(profilesWarning === undefined ? {} : { profilesWarning }),
+  };
 }

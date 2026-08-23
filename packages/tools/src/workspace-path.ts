@@ -72,8 +72,24 @@ export interface ResolvedWorkspacePath {
   readonly sensitive: boolean;
 }
 
+// Only fold case on platforms whose filesystems are case-insensitive by
+// default. Folding on a case-sensitive filesystem would let a case-variant
+// sibling directory outside the workspace pass the containment check.
+const CASE_INSENSITIVE_PLATFORMS = new Set(["darwin", "win32"]);
+export const CASE_INSENSITIVE_PLATFORM = CASE_INSENSITIVE_PLATFORMS.has(
+  process.platform,
+);
+
+export function normalizeForComparison(
+  value: string,
+  caseInsensitive: boolean,
+): string {
+  const normalized = path.normalize(value);
+  return caseInsensitive ? normalized.toLowerCase() : normalized;
+}
+
 function comparable(value: string): string {
-  return path.normalize(value).toLowerCase();
+  return normalizeForComparison(value, CASE_INSENSITIVE_PLATFORM);
 }
 
 function isContained(root: string, candidate: string): boolean {

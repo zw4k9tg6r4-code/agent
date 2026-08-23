@@ -240,6 +240,28 @@ describe("DefaultPermissionEvaluator direct-process matrix", () => {
     expect(escapedOutputArg).toMatchObject({ outcome: "deny", ruleId: "path.escape" });
   });
 
+  it("denies every eval spelling for node and python", async () => {
+    const cases: readonly JsonObject[] = [
+      { program: "node", args: ["--eval=process.exit(1)"] },
+      { program: "node", args: ["--print=process.version"] },
+      { program: "node", args: ["-e=process.exit(1)"] },
+      { program: "python", args: ["-cprint(1)"] },
+      { program: "python3", args: ["-c", "print(1)"] },
+    ];
+    for (const arguments_ of cases) {
+      const decision = await evaluator.evaluate(
+        request("trusted", "shell_execute", "execute", {
+          cwd: ".",
+          ...arguments_,
+        }),
+      );
+      expect(decision).toMatchObject({
+        outcome: "deny",
+        ruleId: "process.deny_always",
+      });
+    }
+  });
+
   it("denies a call/definition mismatch and an unknown tool", async () => {
     const mismatch = await evaluator.evaluate({
       mode: "workspace",
