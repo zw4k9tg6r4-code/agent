@@ -347,6 +347,84 @@ describe("createAgentRunner", () => {
     ).toEqual([]);
   });
 
+  it("continues and finishes a session cancelled during model streaming", async () => {
+    const store = new MemorySessionStore();
+    const controller = new AbortController();
+    const provider: ModelProvider = {
+      id: "aborting",
+      async *stream(
+        _request: ModelRequest,
+        options: ModelProviderOptions,
+      ): AsyncIterable<ModelEvent> {
+        yield { type: "text_delta", delta: "partial" };
+        controller.abort("user_cancelled");
+        options.signal.throwIfAborted();
+        yield { type: "completed", stopReason: "end_turn" };
+      },
+    };
+    const success = new ScriptedProvider([
+      [
+        { type: "text_delta", delta: "recovered" },
+        {
+          type: "usage",
+          usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 },
+        },
+        { type: "completed", stopReason: "end_turn" },
+      ],
+    ]);
+    const runner = createAgentRunner(
+      makeDependencies({ provider, sessions: store }),
+      {},
+      { contextLoader: new StaticContextLoader(), createId: ids() },
+    );
+
+    const cancelled = await runner.runTurn({
+      kind: "new",
+      sessionId: "session-stream-cancel",
+      task: "long task",
+      workspaceRoot: "C:/workspace",
+      permissionMode: "workspace",
+      limits,
+      signal: controller.signal,
+    });
+    expect(cancelled).toMatchObject({
+      status: "running",
+      error: { code: "turn_cancelled", message: "user_cancelled" },
+    });
+
+    const continuing = await createAgentRunner(
+      makeDependencies({ provider: success, sessions: store }),
+      {},
+      { contextLoader: new StaticContextLoader(), createId: ids() },
+    ).runTurn({
+      workspaceRoot: "C:/workspace",
+      kind: "continue",
+      sessionId: "session-stream-cancel",
+      message: "try again",
+      limits,
+      signal: new AbortController().signal,
+    });
+    expect(continuing).toMatchObject({
+      status: "running",
+      output: "recovered",
+    });
+
+    const finished = await createAgentRunner(
+      makeDependencies({ provider: success, sessions: store }),
+      {},
+      { contextLoader: new StaticContextLoader(), createId: ids() },
+    ).finishSession({
+      sessionId: "session-stream-cancel",
+      signal: new AbortController().signal,
+    });
+    expect(finished).toMatchObject({ status: "completed" });
+    expect(
+      store.events("session-stream-cancel").filter(
+        (event) => event.type === "turn_cancelled",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("throws for invalid inputs and session states", async () => {
     const store = new MemorySessionStore();
     const runner = createAgentRunner(

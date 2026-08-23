@@ -27,7 +27,7 @@ Session records are append-only. `SessionEventStore.append` atomically assigns e
 
 `AgentRunner.runTurn` supports new, continued, and resumed turns. A successful turn leaves the session in `running` state so interactive input can continue. `AgentRunner.finishSession` is the only normal path that writes `session_completed`; no event may be appended after a terminal session event.
 
-An external abort interrupts only the active Turn. Core returns a running result with `turn_cancelled` and leaves that Turn incomplete, without appending `turn_failed` or `session_cancelled`, so recovery can apply the same unknown-execution checks as a process crash. `session_cancelled` is reserved for explicit whole-session termination outside the MVP.
+An external abort interrupts only the active Turn. Core returns a running result with `turn_cancelled` and never appends `turn_failed` or `session_cancelled` for an abort. `turn_cancelled` closes the turn for continuation: a later `continue` turn may start only after the snapshot has no pending tool states and no unknown tool executions, so recovery applies the same unknown-execution checks as a process crash. `session_cancelled` is reserved for explicit whole-session termination outside the MVP.
 
 ## Security rule
 

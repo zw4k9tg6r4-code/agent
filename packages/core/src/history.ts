@@ -234,7 +234,8 @@ export async function loadSessionSnapshot(
       terminalToolCallIds.add(event.result.toolCallId);
     } else if (
       event.type === "turn_completed" ||
-      event.type === "turn_failed"
+      event.type === "turn_failed" ||
+      event.type === "turn_cancelled"
     ) {
       turnTerminal.add(event.turnId);
       if (event.type === "turn_completed") {
