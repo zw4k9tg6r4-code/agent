@@ -613,53 +613,66 @@ function parseEvent(
   return value as unknown as SessionEvent;
 }
 
-function validateHistory(
-  sessionId: string,
-  events: readonly SessionEvent[],
-): void {
-  let activeTurnId: string | undefined;
-  const pendingToolCallIds = new Set<string>();
-  let terminal = false;
+class HistoryValidator {
+  readonly #sessionId: string;
+  #seenStarted = false;
+  #activeTurnId: string | undefined;
+  #pendingToolCallIds = new Set<string>();
+  #terminal = false;
 
-  for (let index = 0; index < events.length; index += 1) {
-    const event = events[index];
-    if (event === undefined) continue;
+  constructor(sessionId: string) {
+    this.#sessionId = sessionId;
+  }
+
+  clone(): HistoryValidator {
+    const copy = new HistoryValidator(this.#sessionId);
+    copy.#seenStarted = this.#seenStarted;
+    copy.#activeTurnId = this.#activeTurnId;
+    copy.#pendingToolCallIds = new Set(this.#pendingToolCallIds);
+    copy.#terminal = this.#terminal;
+    return copy;
+  }
+
+  process(event: SessionEvent, index: number): void {
+    const sessionId = this.#sessionId;
     if (event.sequence !== index + 1) {
       throw dataError(`session ${sessionId} has a sequence gap at ${index + 1}`);
     }
-    if (index === 0 && event.type !== "session_started") {
-      throw dataError(`session ${sessionId} first event must be session_started`);
-    }
-    if (index > 0 && event.type === "session_started") {
+    if (!this.#seenStarted) {
+      if (event.type !== "session_started") {
+        throw dataError(`session ${sessionId} first event must be session_started`);
+      }
+      this.#seenStarted = true;
+    } else if (event.type === "session_started") {
       throw dataError(`session ${sessionId} has duplicate session_started`);
     }
-    if (terminal) {
+    if (this.#terminal) {
       throw dataError(`session ${sessionId} has an event after its terminal`);
     }
 
     if (event.type === "turn_started") {
       if (event.kind === "resume") {
-        if (activeTurnId === undefined && pendingToolCallIds.size === 0) {
+        if (this.#activeTurnId === undefined && this.#pendingToolCallIds.size === 0) {
           throw dataError(
             `session ${sessionId} cannot resume without recoverable state`,
           );
         }
       } else if (
-        activeTurnId !== undefined
-        || pendingToolCallIds.size > 0
+        this.#activeTurnId !== undefined
+        || this.#pendingToolCallIds.size > 0
       ) {
-        const reason = activeTurnId === undefined
+        const reason = this.#activeTurnId === undefined
           ? "unresolved tool calls"
-          : `${activeTurnId} is incomplete`;
+          : `${this.#activeTurnId} is incomplete`;
         throw dataError(
           `session ${sessionId} cannot start ${event.kind} while ${reason}`,
         );
       }
-      activeTurnId = event.turnId;
-      continue;
+      this.#activeTurnId = event.turnId;
+      return;
     }
 
-    if ("turnId" in event && event.turnId !== activeTurnId) {
+    if ("turnId" in event && event.turnId !== this.#activeTurnId) {
       throw dataError(
         `session ${sessionId} event does not match its active turn`,
       );
@@ -667,12 +680,12 @@ function validateHistory(
 
     if (event.type === "model_response_completed") {
       for (const call of event.message.toolCalls ?? []) {
-        pendingToolCallIds.add(call.id);
+        this.#pendingToolCallIds.add(call.id);
       }
     } else if (event.type === "tool_requested") {
-      pendingToolCallIds.add(event.call.id);
+      this.#pendingToolCallIds.add(event.call.id);
     } else if (event.type === "tool_completed" || event.type === "tool_failed") {
-      pendingToolCallIds.delete(event.result.toolCallId);
+      this.#pendingToolCallIds.delete(event.result.toolCallId);
     }
 
     if (
@@ -682,24 +695,23 @@ function validateHistory(
     ) {
       if (
         event.type === "turn_completed"
-        && pendingToolCallIds.size > 0
+        && this.#pendingToolCallIds.size > 0
       ) {
         throw dataError(
           `session ${sessionId} cannot complete with unresolved tool calls`,
         );
       }
-      activeTurnId = undefined;
-      continue;
+      this.#activeTurnId = undefined;
+      return;
     }
 
     if (TERMINAL_TYPES.has(event.type)) {
-      if (activeTurnId !== undefined || pendingToolCallIds.size > 0) {
+      if (this.#activeTurnId !== undefined || this.#pendingToolCallIds.size > 0) {
         throw dataError(
           `session ${sessionId} cannot terminate with recoverable state`,
         );
       }
-      terminal = true;
-      continue;
+      this.#terminal = true;
     }
   }
 }
@@ -729,6 +741,41 @@ interface FileState {
   readonly events: readonly SessionEvent[];
   readonly needsSeparator: boolean;
   readonly repairOffset: number | null;
+  readonly validator: HistoryValidator;
+}
+
+interface CommittedCache {
+  readonly events: readonly SessionEvent[];
+  readonly committedBytes: number;
+  readonly validator: HistoryValidator;
+}
+
+const MAX_CACHED_SESSIONS = 8;
+
+async function readRange(
+  path: string,
+  start: number,
+  end: number,
+): Promise<Buffer> {
+  const length = Math.max(0, end - start);
+  const buffer = Buffer.alloc(length);
+  const handle = await open(path, "r");
+  try {
+    let read = 0;
+    while (read < length) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        read,
+        length - read,
+        start + read,
+      );
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    return buffer.subarray(0, read);
+  } finally {
+    await handle.close();
+  }
 }
 
 interface LockRecord {
@@ -760,6 +807,7 @@ export class JsonlSessionEventStore implements SessionEventStore {
   readonly #createEventId: () => string;
   readonly #lockWaitMs: number;
   readonly #now: () => Date;
+  readonly #committed = new Map<string, CommittedCache>();
 
   constructor(root: string, options: SessionStoreOptions = {}) {
     this.#root = root;
@@ -892,7 +940,8 @@ export class JsonlSessionEventStore implements SessionEventStore {
       sessionId,
       event.sequence,
     );
-    validateHistory(sessionId, [...state.events, event]);
+    const nextValidator = state.validator.clone();
+    nextValidator.process(event, state.events.length);
     const separator =
       state.repairOffset === null && state.needsSeparator ? "\n" : "";
     const serialized = `${separator}${JSON.stringify(event)}\n`;
@@ -912,6 +961,12 @@ export class JsonlSessionEventStore implements SessionEventStore {
     } finally {
       await append.close();
     }
+    this.#rememberCommitted(
+      sessionId,
+      [...state.events, event],
+      currentSize + serializedBytes,
+      nextValidator,
+    );
     return event;
   }
 
@@ -962,10 +1017,10 @@ export class JsonlSessionEventStore implements SessionEventStore {
     allowMissing: boolean,
   ): Promise<FileState> {
     assertSessionId(sessionId);
-    let raw: Buffer;
+    const path = this.#path(sessionId);
+    let size: number;
     try {
-      const p = this.#path(sessionId);
-      const st = await stat(p).catch((err) => {
+      const st = await stat(path).catch((err) => {
         if (hasCode(err, "ENOENT")) return null;
         throw err;
       });
@@ -977,7 +1032,7 @@ export class JsonlSessionEventStore implements SessionEventStore {
       if (st.size > 100_000_000) {
         throw new CliError("DATA_ERROR", EXIT_CODES.runtimeFailure, `session file exceeds 100MB limit: ${sessionId}`);
       }
-      raw = await readFile(p);
+      size = st.size;
     } catch (error) {
       if (hasCode(error, "ENOENT")) {
         if (allowMissing) {
@@ -985,6 +1040,7 @@ export class JsonlSessionEventStore implements SessionEventStore {
             events: [],
             needsSeparator: false,
             repairOffset: null,
+            validator: new HistoryValidator(sessionId),
           };
         }
         throw new CliError(
@@ -996,28 +1052,68 @@ export class JsonlSessionEventStore implements SessionEventStore {
       throw error;
     }
 
+    // Reuse the validated committed prefix when the file only grew. The
+    // store is the sole writer under its session lock, so an append never
+    // rewrites earlier bytes; a shrink (repair truncation or external
+    // rewrite) busts the cache and falls back to a full re-read.
+    const cached = this.#committed.get(sessionId);
+    let raw: Buffer;
+    let committedStart = 0;
+    let events: SessionEvent[] = [];
+    let validator = new HistoryValidator(sessionId);
+    let cacheUsable = cached !== undefined && size >= cached.committedBytes;
+    if (cacheUsable && cached !== undefined) {
+      const start = cached.committedBytes;
+      const tail = await readRange(path, start, size);
+      const after = await stat(path).catch(() => null);
+      if (after !== null && after.size >= start + tail.byteLength) {
+        raw = tail;
+        committedStart = start;
+        events = [...cached.events];
+        validator = cached.validator.clone();
+      } else {
+        cacheUsable = false;
+        this.#committed.delete(sessionId);
+        raw = await readFile(path);
+      }
+    } else {
+      if (cached !== undefined) {
+        this.#committed.delete(sessionId);
+      }
+      raw = await readFile(path);
+    }
+
     const lastNewline = raw.lastIndexOf(0x0a);
     const committedEnd = lastNewline + 1;
     const committed = raw.subarray(0, committedEnd).toString("utf8");
     const tail = raw.subarray(committedEnd).toString("utf8");
-    const events: SessionEvent[] = [];
 
     if (committed.length > 0) {
       const lines = committed.split("\n");
       lines.pop();
-      for (let index = 0; index < lines.length; index += 1) {
-        const rawLine = lines[index];
+      for (const rawLine of lines) {
         const line = rawLine?.endsWith("\r")
           ? rawLine.slice(0, -1)
           : rawLine;
         if (line === undefined || line.length === 0) {
           throw dataError(
-            `session ${sessionId} has an empty committed line at ${index + 1}`,
+            `session ${sessionId} has an empty committed line at ${events.length + 1}`,
           );
         }
-        events.push(parseEvent(line, sessionId, index + 1));
+        const event = parseEvent(line, sessionId, events.length + 1);
+        validator.process(event, events.length);
+        events.push(event);
       }
     }
+
+    // Snapshot the committed state before touching the uncommitted tail so
+    // the cache only covers newline-terminated, fully validated events.
+    this.#rememberCommitted(
+      sessionId,
+      events,
+      committedStart + committedEnd,
+      validator.clone(),
+    );
 
     let repairOffset: number | null = null;
     let needsSeparator = false;
@@ -1028,22 +1124,36 @@ export class JsonlSessionEventStore implements SessionEventStore {
       try {
         JSON.parse(normalizedTail);
       } catch {
-        repairOffset = committedEnd;
+        repairOffset = committedStart + committedEnd;
       }
       if (repairOffset === null) {
-        events.push(
-          parseEvent(
-            normalizedTail,
-            sessionId,
-            events.length + 1,
-          ),
+        const event = parseEvent(
+          normalizedTail,
+          sessionId,
+          events.length + 1,
         );
+        validator.process(event, events.length);
+        events.push(event);
         needsSeparator = true;
       }
     }
 
-    validateHistory(sessionId, events);
-    return { events, needsSeparator, repairOffset };
+    return { events, needsSeparator, repairOffset, validator };
+  }
+
+  #rememberCommitted(
+    sessionId: string,
+    events: readonly SessionEvent[],
+    committedBytes: number,
+    validator: HistoryValidator,
+  ): void {
+    this.#committed.delete(sessionId);
+    this.#committed.set(sessionId, { events, committedBytes, validator });
+    while (this.#committed.size > MAX_CACHED_SESSIONS) {
+      const oldest = this.#committed.keys().next().value;
+      if (oldest === undefined) break;
+      this.#committed.delete(oldest);
+    }
   }
 
   async #verifyLock(path: string, token: string): Promise<void> {
@@ -1051,6 +1161,11 @@ export class JsonlSessionEventStore implements SessionEventStore {
     try {
       value = JSON.parse(await readFile(path, "utf8")) as unknown;
     } catch (error) {
+      if (!hasCode(error, "ENOENT")) {
+        // A corrupt lock file is dead weight; remove it so the next
+        // acquire attempt can proceed instead of failing forever.
+        await this.#removeDeadLock(path);
+      }
       throw new CliError("SESSION_BUSY", EXIT_CODES.usageOrConfig, "invalid or missing session lease token");
     }
     if (!record(value) || value["token"] !== token) {

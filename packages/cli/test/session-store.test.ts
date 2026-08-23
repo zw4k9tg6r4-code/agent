@@ -1,6 +1,6 @@
-import { appendFile, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { SessionEvent } from "@agent/contracts";
 import { afterEach, describe, expect, it } from "vitest";
@@ -370,6 +370,41 @@ describe("JsonlSessionEventStore", () => {
     await held;
   });
 
+  it("removes a corrupt lease lock instead of failing forever", async () => {
+    const { sessionRoot, store } = await fixture();
+    const lockPath = join(sessionRoot, "session-1.lock");
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "not-json-at-all", "utf8");
+
+    await expect(
+      store.append("session-1", {
+        type: "session_started",
+        task: "inspect",
+        workspaceRoot: "C:\\workspace",
+        permissionMode: "workspace",
+      }, "stale-token"),
+    ).rejects.toEqual(
+      new CliError(
+        "SESSION_BUSY",
+        EXIT_CODES.usageOrConfig,
+        "invalid or missing session lease token",
+      ),
+    );
+    await expect(
+      readFile(lockPath, "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    // The cleaned lock can be acquired again by a fresh caller.
+    await expect(
+      store.append("session-1", {
+        type: "session_started",
+        task: "inspect",
+        workspaceRoot: "C:\\workspace",
+        permissionMode: "workspace",
+      }),
+    ).resolves.toMatchObject({ type: "session_started" });
+  });
+
   it("rejects append after terminal and path-like session ids", async () => {
     const { store } = await fixture();
     await expect(
@@ -424,5 +459,51 @@ describe("JsonlSessionEventStore", () => {
       workspaceRoot,
       permissionMode: "workspace",
     })).rejects.toThrow(/must not be a symbolic link|must not be a reparse point/);
+  });
+
+  it("keeps reads and appends consistent across many increments", { timeout: 30_000 }, async () => {
+    const { store } = await fixture();
+    const sessionId = "session-incremental";
+    await store.append(sessionId, {
+      type: "session_started",
+      task: "streaming workload",
+      workspaceRoot: "C:\\workspace",
+      permissionMode: "workspace",
+    });
+    await store.append(sessionId, {
+      type: "turn_started",
+      turnId: "turn-1",
+      kind: "new",
+    });
+
+    const totalDeltas = 300;
+    for (let index = 1; index <= totalDeltas; index += 1) {
+      await store.append(sessionId, {
+        type: "model_output",
+        turnId: "turn-1",
+        step: 1,
+        text: `delta-${index}`,
+      });
+      if (index % 150 === 0) {
+        const snapshot = await collect(store.read(sessionId));
+        expect(snapshot).toHaveLength(index + 2);
+        expect(snapshot.at(-1)?.sequence).toBe(index + 2);
+      }
+    }
+    await store.append(sessionId, {
+      type: "turn_completed",
+      turnId: "turn-1",
+      output: "done",
+      steps: 1,
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    });
+
+    const events = await collect(store.read(sessionId));
+    expect(events).toHaveLength(totalDeltas + 3);
+    for (const [index, event] of events.entries()) {
+      expect(event.sequence).toBe(index + 1);
+    }
+    const item = await store.get(sessionId);
+    expect(item?.state).toBe("running");
   });
 });
