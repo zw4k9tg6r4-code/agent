@@ -167,4 +167,26 @@ describe("SIGINT", () => {
     handle.dispose();
     expect(emitter.listenerCount("SIGINT")).toBe(0);
   });
+
+  it("also aborts on SIGTERM and cleans both listeners", () => {
+    const emitter = new EventEmitter();
+    const source: SignalSource = {
+      once(event, listener) {
+        emitter.once(event, listener);
+        return this;
+      },
+      removeListener(event, listener) {
+        emitter.removeListener(event, listener);
+        return this;
+      },
+    };
+    const handle = createInterruptHandle(source);
+
+    emitter.emit("SIGTERM");
+
+    expect(handle.signal.aborted).toBe(true);
+    handle.dispose();
+    expect(emitter.listenerCount("SIGINT")).toBe(0);
+    expect(emitter.listenerCount("SIGTERM")).toBe(0);
+  });
 });

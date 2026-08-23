@@ -97,6 +97,9 @@ export class ProductionRuntimeFactory implements CliRuntimeFactory {
       apiKey,
       requestTimeoutMs: input.config.provider.requestTimeoutMs,
       maxRetries: input.config.provider.maxRetries,
+      ...(input.config.provider.maxTokensField === undefined
+        ? {}
+        : { maxTokensField: input.config.provider.maxTokensField }),
     });
     const checkpoints = new this.#modules.FileCheckpointStore();
     const dependencies: AgentDependencies = {

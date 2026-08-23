@@ -306,7 +306,13 @@ export async function dispatchToolCall(
 
   const limitBytes = tool.definition.outputLimitBytes;
   let result = validateAndNormalizeToolResult(rawResult, input.state.call, limitBytes);
-  result = sanitizeToolResult(result);
+  // File-content tools need verbatim output for the model to reason about
+  // code; the generic name:value secret pattern would corrupt it.
+  result = sanitizeToolResult(result, {
+    namedSecrets:
+      input.state.call.name !== "file_read" &&
+      input.state.call.name !== "file_search",
+  });
 
   if (!result.ok && result.error.code === "PROCESS_TERMINATION_FAILED") {
     throw new AgentCoreError(

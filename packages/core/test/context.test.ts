@@ -8,6 +8,7 @@ import {
   ContextError,
   NodeProjectContextLoader,
   compactModelMessages,
+  estimateMessagesTokens,
 } from "../src/index.js";
 
 const temporaryDirectories: string[] = [];
@@ -179,5 +180,39 @@ describe("compactModelMessages", () => {
       .toContain("LATEST-INSTRUCTION");
     expect(result.compacted).toBe(true);
     expect(result.afterTokens).toBeLessThanOrEqual(50);
+  });
+
+  it("keeps the newest assistant detail that still fits", () => {
+    const result = compactModelMessages(
+      [
+        { role: "system", content: "SAFETY" },
+        { role: "user", content: "GOAL" },
+        { role: "assistant", content: "old-detail-".repeat(100) },
+        { role: "assistant", content: "recent-detail" },
+      ],
+      50,
+    );
+
+    const joined = result.messages.map((message) => message.content).join("\n");
+    expect(joined).toContain("GOAL");
+    expect(joined).toContain("recent-detail");
+    expect(joined).not.toContain("old-detail-");
+    expect(result.compacted).toBe(true);
+    expect(result.afterTokens).toBeLessThanOrEqual(50);
+  });
+
+  it("counts streamed tool call arguments in token estimates", () => {
+    const call = {
+      id: "call-1",
+      name: "file_read",
+      arguments: { path: "a-fairly-long-path/that-should-be-counted.ts" },
+    };
+    const withCalls = estimateMessagesTokens([
+      { role: "assistant", content: "text", toolCalls: [call] },
+    ]);
+    const withoutCalls = estimateMessagesTokens([
+      { role: "assistant", content: "text" },
+    ]);
+    expect(withCalls).toBeGreaterThan(withoutCalls);
   });
 });

@@ -1,7 +1,10 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import type { ModelMessage } from "@agent/contracts";
+import type {
+  ModelMessage,
+  ToolCall,
+} from "@agent/contracts";
 
 const SAFE_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const APPROXIMATE_CHARACTERS_PER_TOKEN = 4;
@@ -47,11 +50,23 @@ function estimateTextTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / APPROXIMATE_CHARACTERS_PER_TOKEN));
 }
 
+function estimateMessageTokens(message: ModelMessage): number {
+  let cost = estimateTextTokens(message.content) + 4;
+  if (message.role === "assistant" && message.toolCalls !== undefined) {
+    try {
+      cost += estimateTextTokens(JSON.stringify(message.toolCalls));
+    } catch {
+      cost += message.toolCalls.length * 64;
+    }
+  }
+  return cost;
+}
+
 export function estimateMessagesTokens(
   messages: readonly ModelMessage[],
 ): number {
   return messages.reduce(
-    (total, message) => total + estimateTextTokens(message.content) + 4,
+    (total, message) => total + estimateMessageTokens(message),
     0,
   );
 }
@@ -232,6 +247,11 @@ export class NodeProjectContextLoader implements ProjectContextLoader {
   }
 }
 
+const COMPACTION_MARKER: ModelMessage = {
+  role: "system",
+  content: "Older assistant and tool detail was compacted from this turn.",
+};
+
 export function compactModelMessages(
   messages: readonly ModelMessage[],
   maxContextTokens: number,
@@ -247,19 +267,41 @@ export function compactModelMessages(
   }
 
   const requiredIndexes = new Set<number>();
+  let requiredTokens = 0;
   messages.forEach((message, index) => {
     if (message.role === "system" || message.role === "user") {
       requiredIndexes.add(index);
+      requiredTokens += estimateMessageTokens(message);
     }
   });
-  const compacted: ModelMessage[] = messages.filter(
-    (_message, index) => requiredIndexes.has(index),
+  const markerTokens = estimateMessageTokens(COMPACTION_MARKER);
+  if (requiredTokens + markerTokens > maxContextTokens) {
+    throw new ContextError(
+      "required_context_exceeds_limit",
+      "System and user messages exceed maxContextTokens.",
+    );
+  }
+
+  // Keep the newest assistant/tool messages that still fit instead of
+  // discarding every one of them; only the oldest detail is dropped.
+  let remaining = maxContextTokens - requiredTokens - markerTokens;
+  const keptIndexes = new Set<number>();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (requiredIndexes.has(index)) {
+      continue;
+    }
+    const cost = estimateMessageTokens(messages[index] as ModelMessage);
+    if (cost > remaining) {
+      break;
+    }
+    remaining -= cost;
+    keptIndexes.add(index);
+  }
+
+  const compacted = messages.filter(
+    (_message, index) => requiredIndexes.has(index) || keptIndexes.has(index),
   );
-  const marker: ModelMessage = {
-    role: "system",
-    content: "Older assistant and tool detail was compacted from this turn.",
-  };
-  compacted.splice(Math.min(1, compacted.length), 0, marker);
+  compacted.splice(Math.min(1, compacted.length), 0, COMPACTION_MARKER);
   const afterTokens = estimateMessagesTokens(compacted);
   if (afterTokens > maxContextTokens) {
     throw new ContextError(

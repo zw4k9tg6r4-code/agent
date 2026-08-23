@@ -20,9 +20,19 @@ export interface OpenAICompatibleProviderConfig {
   readonly apiKeyEnvVar: string;
   /** Optional pre-resolved API key. When set, takes precedence over env var lookup. */
   readonly apiKey?: string;
+  /**
+   * Stream inactivity timeout: the request is aborted after
+   * requestTimeoutMs without receiving any SSE data. Defaults reset the
+   * budget on every frame, so long but active streams are not killed.
+   */
   readonly requestTimeoutMs: number;
   readonly maxRetries?: number;
   readonly temperature?: number;
+  /**
+   * Request body field carrying the output limit. Defaults to max_tokens;
+   * newer OpenAI models require max_completion_tokens.
+   */
+  readonly maxTokensField?: "max_tokens" | "max_completion_tokens";
 }
 
 export interface OpenAICompatibleRuntime {
@@ -189,6 +199,7 @@ function validateConfig(
       ? {}
       : { temperature: config.temperature }),
     ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
+    maxTokensField: config.maxTokensField ?? "max_tokens",
   };
 }
 
@@ -240,7 +251,7 @@ function requestBody(
     stream_options: { include_usage: true },
     ...(request.maxOutputTokens === undefined
       ? {}
-      : { max_tokens: request.maxOutputTokens }),
+      : { [config.maxTokensField]: request.maxOutputTokens }),
     ...((request.temperature ?? config.temperature) === undefined
       ? {}
       : { temperature: request.temperature ?? config.temperature }),
@@ -606,10 +617,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
     apiKey: string,
   ): AsyncIterable<ModelEvent> {
     const timeout = new AbortController();
-    const timer = setTimeout(
-      () => timeout.abort("request_timeout"),
-      this.#config.requestTimeoutMs,
-    );
+    let timer: NodeJS.Timeout | undefined;
+    const fire = (): void => {
+      timeout.abort("request_timeout");
+    };
+    // Inactivity timeout: every received frame refreshes the budget, so a
+    // long but steadily streaming response is never cut off mid-flight.
+    const bump = (): void => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(fire, this.#config.requestTimeoutMs);
+      timer.unref();
+    };
+    bump();
     const signal = AbortSignal.any([externalSignal, timeout.signal]);
     try {
       let response: Response;
@@ -660,6 +681,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           if (data === "[DONE]") {
             break;
           }
+          bump();
           let frame: unknown;
           try {
             frame = JSON.parse(data);
@@ -699,6 +721,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
           }
           for (const choice of choices) {
             if (!isRecord(choice)) {
+              continue;
+            }
+            // This runtime never requests parallel choices; frames for any
+            // other index would interleave unrelated output, so skip them.
+            if (typeof choice["index"] === "number" && choice["index"] !== 0) {
               continue;
             }
             const delta = choice["delta"];
@@ -742,7 +769,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
       }
       yield { type: "completed", stopReason: completed };
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
     }
   }
 }
