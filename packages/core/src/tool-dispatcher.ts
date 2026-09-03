@@ -14,7 +14,6 @@ import type {
   JsonObject,
 } from "@agent/contracts";
 
-import { AgentCoreError } from "./errors.js";
 import type { PendingToolState } from "./history.js";
 import { sanitizeToolResult } from "./redaction.js";
 
@@ -294,7 +293,14 @@ export async function dispatchToolCall(
     });
   } catch (error) {
     if (input.signal.aborted) {
-      throw input.signal.reason;
+      // Persist the cancellation as a terminal tool result instead of
+      // throwing: tool_execution_started was already appended above, and a
+      // throw here would leave it without a terminal result, bricking the
+      // session (unknown_tool_execution_state on every resume/finish).
+      return recordFailure(
+        input,
+        failure(input.state.call, "CANCELLED", "process was cancelled"),
+      );
     }
     rawResult = failure(
       input.state.call,
@@ -307,19 +313,19 @@ export async function dispatchToolCall(
   const limitBytes = tool.definition.outputLimitBytes;
   let result = validateAndNormalizeToolResult(rawResult, input.state.call, limitBytes);
   // File-content tools need verbatim output for the model to reason about
-  // code; the generic name:value secret pattern would corrupt it.
+  // code; the generic name:value secret pattern would corrupt it. Metadata
+  // and error messages are still fully redacted inside sanitizeToolResult.
   result = sanitizeToolResult(result, {
     namedSecrets:
       input.state.call.name !== "file_read" &&
       input.state.call.name !== "file_search",
   });
 
-  if (!result.ok && result.error.code === "PROCESS_TERMINATION_FAILED") {
-    throw new AgentCoreError(
-      "process_termination_failed",
-      "process tree did not terminate within the bounded kill deadline",
-    );
-  }
+  // NOTE: PROCESS_TERMINATION_FAILED is persisted as a regular tool_failed
+  // result on purpose. Throwing here would leave tool_execution_started
+  // without a terminal result and brick the session (the kill deadline was
+  // already enforced by the tool layer; the outcome stays visible via the
+  // error code).
 
   if (result.ok) {
     await input.sessions.append(input.sessionId, {

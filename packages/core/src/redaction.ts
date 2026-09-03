@@ -76,6 +76,10 @@ export function sanitizeToolResult(
   result: ToolResult,
   options: RedactionOptions = {},
 ): ToolResult {
+  // Metadata and error messages never contain model-reasoning content, so
+  // they are always fully redacted even when the caller disables
+  // namedSecrets for file-content output.
+  const strict: RedactionOptions = { ...options, namedSecrets: true };
   const common = {
     toolCallId: result.toolCallId,
     output:
@@ -84,7 +88,7 @@ export function sanitizeToolResult(
         : "",
     ...(result.metadata === undefined
       ? {}
-      : { metadata: sanitizeObject(result.metadata, options) }),
+      : { metadata: sanitizeObject(result.metadata, strict) }),
   };
   return result.ok
     ? { ...common, ok: true }
@@ -93,7 +97,7 @@ export function sanitizeToolResult(
         ok: false,
         error: {
           ...result.error,
-          message: sanitizeString(result.error?.message ?? "", options),
+          message: sanitizeString(result.error?.message ?? "", strict),
         },
       };
 }

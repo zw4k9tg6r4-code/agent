@@ -54,6 +54,32 @@ const FORBIDDEN_PROGRAMS = new Set([
 ]);
 
 /**
+ * Inline code-execution flags beyond node (mirrors the policy risk analysis
+ * so a misconfigured `trusted` mode cannot smuggle eval past the tool
+ * layer). Ruby `-E` (encoding) is intentionally not matched: only the
+ * lowercase eval spellings are blocked.
+ */
+export function isInlineEvalFlag(basename: string, argument: string): boolean {
+  const program = basename.endsWith(".exe")
+    ? basename.slice(0, -".exe".length)
+    : basename;
+  if (program === "node") {
+    return isNodeEvalArgument(argument);
+  }
+  if (program === "python" || program === "python3") {
+    const flag = argument.toLowerCase();
+    return flag === "-c" || (flag.startsWith("-c") && flag.length > 2);
+  }
+  if (program === "ruby" || program === "perl") {
+    return argument === "-e" || (argument.startsWith("-e") && argument.length > 2);
+  }
+  if (program === "php") {
+    return argument === "-r" || (argument.startsWith("-r") && argument.length > 2);
+  }
+  return false;
+}
+
+/**
  * Matches every form of the Node eval/print flags, including the inline
  * `--eval=code` / `--print=code` spellings, so no eval variant slips past
  * the direct-process boundary checks.
@@ -118,8 +144,7 @@ function parseShellInput(input: JsonObject): ShellInput {
     [".bat", ".cmd", ".ps1", ".sh"].includes(
       path.extname(basename),
     ) ||
-    ((basename === "node" || basename === "node.exe") &&
-      args.some((argument) => isNodeEvalArgument(argument)))
+    args.some((argument) => isInlineEvalFlag(basename, argument))
   ) {
     throw new TypeError(
       "shell interpreters, script wrappers, and eval flags are not accepted",

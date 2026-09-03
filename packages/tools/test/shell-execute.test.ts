@@ -249,6 +249,26 @@ describe("runShellExecute", () => {
     },
   );
 
+  it("rejects inline eval flags for python, ruby, and php", async () => {
+    const cases = [
+      { program: "C:/tools/python.exe", args: ["-c", "print(1)"] },
+      { program: "C:/tools/python3.exe", args: ["-cprint(1)"] },
+      { program: "C:/tools/ruby.exe", args: ["-e", "puts 1"] },
+      { program: "C:/tools/perl.exe", args: ["-eprint 1"] },
+      { program: "C:/tools/php.exe", args: ["-r", "echo 1;"] },
+    ] as const;
+    for (const { program, args } of cases) {
+      const result = await runShellExecute(
+        call({ program, args: [...args] }),
+        context(),
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_INPUT" },
+      });
+    }
+  });
+
   it("rejects eval flags and opaque command input", async () => {
     const evalResult = await runShellExecute(
       call({

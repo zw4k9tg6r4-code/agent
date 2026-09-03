@@ -14,8 +14,13 @@ From the Agent repository:
 $agentRepository = (Get-Location).Path
 npm.cmd install
 npm.cmd run build
+npm.cmd run verify
 npm.cmd run start --workspace @agent/cli -- --help
 ```
+
+Always build before testing: cross-package tests resolve to compiled `dist`,
+so a bare `npm test` on a fresh clone fails. `verify` runs
+`build + typecheck + test:coverage` in the right order.
 
 Windows PowerShell does not need an execution-policy change. npm commands use
 `npm.cmd`.

@@ -162,6 +162,19 @@ function validateConfig(
       false,
     );
   }
+  // Plain HTTP would send `Authorization: Bearer <apiKey>` in cleartext.
+  // Only loopback targets (local dev models) may opt out of TLS.
+  if (parsed.protocol === "http:") {
+    const host = parsed.hostname.toLowerCase();
+    const loopback = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+    if (!loopback.has(host)) {
+      throw new OpenAICompatibleError(
+        "invalid_provider_config",
+        "baseUrl must use https for non-loopback hosts; plain http would leak the API key.",
+        false,
+      );
+    }
+  }
   if (
     !Number.isInteger(config.requestTimeoutMs) ||
     config.requestTimeoutMs < 1 ||

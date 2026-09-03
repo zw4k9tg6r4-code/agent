@@ -463,6 +463,19 @@ describe("OpenAICompatibleProvider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects plain http API endpoints except loopback", () => {
+    expect(() =>
+      provider(async () => sse([]), { baseUrl: "http://example.test/v1" }),
+    ).toThrowError(
+      expect.objectContaining({ code: "invalid_provider_config" }),
+    );
+    expect(() =>
+      provider(async () => sse([]), {
+        baseUrl: "http://localhost:11434/v1",
+      }),
+    ).not.toThrow();
+  });
+
   it("enforces tool call limits and argument size limits", async () => {
     const fetchCallsLimit = vi.fn<typeof fetch>(async () => {
       const calls = [];

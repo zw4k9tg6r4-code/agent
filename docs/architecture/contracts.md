@@ -5,8 +5,8 @@
 ## Dependency rule
 
 - `core`, `providers`, `tools`, `policy`, and `cli` may import from `@agent/contracts`.
-- Implementation packages must not import another package's internal `src/` files.
-- The final composition root may import public package entry points after the implementation branches are integrated.
+- Implementation packages must not import another package's internal `src/` files, with one exception: `policy` may import the public `@agent/tools` entry point (process-risk analysis reuses the shell validators; declared in `packages/policy/package.json`).
+- The final composition root (`cli`) may import public package entry points.
 - Public data crossing package boundaries must be JSON-safe unless the contract explicitly uses a platform object such as `AbortSignal`.
 
 ## Compatibility rule

@@ -1,5 +1,10 @@
 # Agent MVP Preparation Handoff
 
+> Superseded: this handoff describes the 2026-07-22 paused state (4 test
+> files / 12 tests, worktrees not started). Implementation is complete on
+> `main` (~37 test files); do not open new worktrees from it. Start from
+> `examples/README.md` instead.
+
 ## Status
 
 - State: paused after preparation; implementation worktrees have not started.

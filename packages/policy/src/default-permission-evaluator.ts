@@ -269,6 +269,42 @@ async function canonicalizeProcessArguments(
       await resolveWorkspacePath(workspaceRoot, candidate, {
         rejectSensitive: true,
       });
+      continue;
+    }
+    // Best-effort symlink check for bare relative args (e.g. `link` or
+    // `dir/file`): they pass obviousPath but may still resolve outside the
+    // workspace via a symlink. Escapes and sensitive/protected targets are
+    // denied; anything else is left as-is so bare words (branches, URLs,
+    // revisions) keep working.
+    if (!argument.startsWith("-")) {
+      const maybePath = argument.includes("=")
+        ? argument.slice(argument.indexOf("=") + 1)
+        : argument;
+      if (maybePath.length > 0 && !maybePath.startsWith("-")) {
+        try {
+          const target = await resolveWorkspacePath(workspaceRoot, maybePath, {
+            rejectSensitive: true,
+          });
+          if (isProtectedWorkspacePath(target.relativePath)) {
+            throw new WorkspacePathError(
+              "SENSITIVE_PATH",
+              "protected paths cannot be process arguments",
+            );
+          }
+        } catch (error) {
+          if (error instanceof WorkspacePathError) {
+            if (
+              error.code === "PATH_ESCAPE" ||
+              error.code === "SENSITIVE_PATH"
+            ) {
+              throw error;
+            }
+            // PATH_NOT_FOUND / INVALID_PATH: not a workspace path, ignore.
+            continue;
+          }
+          throw error;
+        }
+      }
     }
   }
   return resolved;

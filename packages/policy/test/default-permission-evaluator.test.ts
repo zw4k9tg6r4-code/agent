@@ -262,6 +262,29 @@ describe("DefaultPermissionEvaluator direct-process matrix", () => {
     }
   });
 
+  it("denies bare relative args that escape via symlink", async () => {
+    const escaped = await evaluator.evaluate(
+      request("trusted", "shell_execute", "execute", {
+        program: "node",
+        args: ["escape/outside.txt"],
+        cwd: ".",
+      }),
+    );
+    expect(escaped).toMatchObject({
+      outcome: "deny",
+      ruleId: "path.escape",
+    });
+
+    const inside = await evaluator.evaluate(
+      request("trusted", "shell_execute", "execute", {
+        program: "node",
+        args: ["src/index.ts"],
+        cwd: ".",
+      }),
+    );
+    expect(inside.outcome).not.toBe("deny");
+  });
+
   it("denies a call/definition mismatch and an unknown tool", async () => {
     const mismatch = await evaluator.evaluate({
       mode: "workspace",

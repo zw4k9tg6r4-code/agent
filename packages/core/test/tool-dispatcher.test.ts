@@ -324,4 +324,75 @@ describe("dispatchToolCall", () => {
       "tool_completed",
     ]);
   });
+
+  it("persists PROCESS_TERMINATION_FAILED as tool_failed instead of throwing", async () => {
+    const store = new MemorySessionStore();
+    const permissions = new FixedPermissionEvaluator([
+      {
+        outcome: "allow",
+        reason: "inside workspace",
+        ruleId: "workspace.read",
+        resolvedArguments: { path: "C:/workspace/README.md" },
+      },
+    ]);
+    const result = await dispatchToolCall({
+      ...baseInput(permissions, new FixedConfirmer([]), store),
+      tools: [
+        makeTool("file_read", async (call: ToolCall) => ({
+          toolCallId: call.id,
+          ok: false as const,
+          output: "",
+          error: {
+            code: "PROCESS_TERMINATION_FAILED",
+            message: "process tree did not terminate",
+            retryable: false,
+          },
+        })),
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "PROCESS_TERMINATION_FAILED" },
+    });
+    expect(
+      store.events("session-1").map((event) => event.type),
+    ).toEqual([
+      "tool_requested",
+      "permission_decided",
+      "tool_execution_started",
+      "tool_failed",
+    ]);
+  });
+
+  it("records a mid-execution abort as CANCELLED instead of bricking the session", async () => {
+    const controller = new AbortController();
+    const store = new MemorySessionStore();
+    const permissions = new FixedPermissionEvaluator([
+      {
+        outcome: "allow",
+        reason: "inside workspace",
+        ruleId: "workspace.read",
+        resolvedArguments: { path: "C:/workspace/README.md" },
+      },
+    ]);
+    const result = await dispatchToolCall({
+      ...baseInput(permissions, new FixedConfirmer([]), store),
+      signal: controller.signal,
+      tools: [
+        makeTool("file_read", async () => {
+          controller.abort();
+          throw new Error("boom");
+        }),
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "CANCELLED" },
+    });
+    expect(
+      store.events("session-1").map((event) => event.type),
+    ).toContain("tool_failed");
+  });
 });
